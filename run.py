@@ -3,7 +3,7 @@ from unet import UNet
 
 mode = "demultiple" #demultiple, interpolation, denoising
 folder = "dataset/"+mode+"/data_train/"
-image_size = (64,128)
+image_size = (64,256)
 
 model = UNet(
         in_channel=2,
@@ -24,9 +24,9 @@ trainer = Trainer(
     mode = mode,
     folder = folder,
     image_size = image_size,
-    train_batch_size = 4, #32 for A100; 16 for GTX
-    train_lr = 2e-5,
-    train_num_steps = 1000000,         # total training steps
+    train_batch_size = 32, #32 for A100; 16 for GTX
+    train_lr = 1e-4,
+    train_num_steps = 100000,         # total training steps
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
