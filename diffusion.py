@@ -341,7 +341,7 @@ class Trainer(object):
         self.dl = cycle(data.DataLoader(self.ds, batch_size = train_batch_size, shuffle=True, pin_memory=True))
         self.opt = Adam(diffusion_model.parameters(), lr=train_lr)
 
-        self.step = 0
+        self.step = 1
 
         self.amp = amp
         self.scaler = GradScaler(enabled = amp)
@@ -380,7 +380,7 @@ class Trainer(object):
         self.scaler.load_state_dict(data['scaler'])
 
     def train(self):
-        while self.step < self.train_num_steps:
+        while self.step <= self.train_num_steps:
             for i in range(self.gradient_accumulate_every):
                 img = next(self.dl)
                 inputs = img[0].to("mps")#.cuda()
@@ -398,8 +398,8 @@ class Trainer(object):
 
             if self.step % self.update_ema_every == 0:
                 self.step_ema()
-            if self.step != 0 and self.step % self.save_and_sample_every == 0:
-                milestone = self.step // self.save_and_sample_every
+            if (self.step == self.train_num_steps) or (self.step != 0 and self.step % self.save_and_sample_every == 0):
+                milestone = self.step // self.save_and_sample_every if self.step < self.train_num_steps else 'final'
                 inputs_ = torch.unsqueeze(inputs[0], dim=0)
                 if self.mode == "interpolation":
                     gt_ = torch.unsqueeze(gt[0], dim=0)
