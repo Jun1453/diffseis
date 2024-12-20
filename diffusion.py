@@ -254,12 +254,13 @@ class Dataset(data.Dataset):
             data: original data patches
             rate: sampling rate,range(0,1)
         """
-        n = data.size()[-1]
+        n = data.size()[-2]
         mask = torch.torch.zeros(data.size(),dtype=torch.float64)
         
         v = round(n*rate)
         TM = random.sample(range(n),v)
-        mask[:,:,TM]=1 # missing by column 
+        # mask[:,:,TM]=1 # missing by column 
+        mask[:,TM,:]=1 # missing by raw 
         mask = mask.type(torch.HalfTensor)
         return  mask
 
