@@ -1,7 +1,7 @@
 from diffusion import GaussianDiffusion, Trainer
 from unet import UNet
 
-mode = "demultiple" #demultiple, interpolation, denoising
+mode = "interpolation" #demultiple, interpolation, denoising
 folder = "dataset/"+mode+"/data_train/"
 image_size = (64,256)
 
@@ -16,7 +16,7 @@ diffusion = GaussianDiffusion(
     channels = 1,
     image_size = image_size,
     timesteps = 2000,
-    loss_type = 'l1', # L1 or L2
+    loss_type = 'l2', # L1 or L2
 ).cuda()
 
 trainer = Trainer(
