@@ -23,7 +23,7 @@ def natural_noise(shape_like, toggle_on=False):
     noise = torch.randn_like(shape_like)
     if toggle_on:
         for i in range(len(noise)):
-            noise[i] = torch.from_numpy(bandpass(noise[i], cutoff=(2.,10.), sample_rate=250).copy())
+            noise[i] = torch.from_numpy(bandpass(noise[i].cpu().numpy(), cutoff=(2.,10.), sample_rate=250).copy())
     return noise
 
 def bandpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 6):
