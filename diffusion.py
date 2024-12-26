@@ -333,7 +333,8 @@ class Trainer(object):
         amp = False,
         step_start_ema = 5000,
         update_ema_every = 1,
-        save_and_sample_every = 10000
+        save_and_sample_every = 10000,
+        result_suffix=''
     ):
         super().__init__()
         self.model = diffusion_model
@@ -360,7 +361,7 @@ class Trainer(object):
         self.amp = amp
         self.scaler = GradScaler(enabled = amp)
         
-        results_folder = './results_'+str(self.mode)
+        results_folder = './results_'+str(self.mode)+str(result_suffix)
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok = True)
