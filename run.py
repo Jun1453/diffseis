@@ -7,7 +7,7 @@ image_size = (64,256)
 
 model = UNet(
         in_channel=2,
-        out_channel=1
+        dropout=0.5
 ).cuda()
 
 diffusion = GaussianDiffusion(
@@ -30,6 +30,7 @@ trainer = Trainer(
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
+    save_and_sample_every=2500
 )
 
 trainer.train()

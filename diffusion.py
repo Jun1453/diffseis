@@ -23,13 +23,13 @@ def natural_noise(shape_like, toggle_on=False):
     noise = torch.randn_like(shape_like)
     if toggle_on:
         for i in range(len(noise)):
-            noise[i] = torch.from_numpy(bandpass(noise[i].cpu().numpy(), cutoff=(2.,10.), sample_rate=250).copy())
+            noise[i] = torch.from_numpy(bandpass(noise[i].cpu().numpy(), cutoff=(2.,10.), sample_rate=250, mix_input=0.5).copy())
     return noise
 
-def bandpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 6):
+def bandpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 2, mix_input=0):
     b, a = butter(poles, cutoff, 'bandpass', fs=sample_rate)
     filtered_data = filtfilt(b, a, data, axis=1)
-    return filtered_data
+    return filtered_data + mix_input*np.array(data)
 
 def cycle(dl):
     while True:
@@ -333,7 +333,8 @@ class Trainer(object):
         amp = False,
         step_start_ema = 5000,
         update_ema_every = 1,
-        save_and_sample_every = 10000
+        save_and_sample_every = 10000,
+        result_suffix=''
     ):
         super().__init__()
         self.model = diffusion_model
@@ -360,7 +361,7 @@ class Trainer(object):
         self.amp = amp
         self.scaler = GradScaler(enabled = amp)
         
-        results_folder = './results_'+str(self.mode)
+        results_folder = './results_'+str(self.mode)+str(result_suffix)
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok = True)
