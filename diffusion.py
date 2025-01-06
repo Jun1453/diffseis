@@ -17,19 +17,6 @@ from pathlib import Path
 from torch.optim import Adam
 from torchvision import transforms, utils
 from PIL import Image
-from scipy.signal import butter, filtfilt
-
-def natural_noise(shape_like, toggle_on=False): 
-    noise = torch.randn_like(shape_like)
-    if toggle_on:
-        for i in range(len(noise)):
-            noise[i] = torch.from_numpy(bandpass(noise[i].cpu().numpy(), cutoff=(2.,10.), sample_rate=250, mix_input=0.5).copy())
-    return noise
-
-def bandpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 2, mix_input=0):
-    b, a = butter(poles, cutoff, 'bandpass', fs=sample_rate)
-    filtered_data = filtfilt(b, a, data, axis=1)
-    return filtered_data + mix_input*np.array(data)
 
 def cycle(dl):
     while True:
@@ -210,7 +197,7 @@ class GaussianDiffusion(nn.Module):
         return self.p_sample_loop(x_in, mask)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
-        noise = default(noise, lambda: natural_noise(x_start, self.mode=='interpolation'))
+        noise = default(noise, lambda: torch.randn_like(x_start))
 
         # random gama
         return (continuous_sqrt_alpha_cumprod * x_start + (1 - continuous_sqrt_alpha_cumprod**2).sqrt() * noise)
@@ -222,7 +209,7 @@ class GaussianDiffusion(nn.Module):
             np.random.uniform(self.sqrt_alphas_cumprod_prev[t-1],self.sqrt_alphas_cumprod_prev[t],size=b)).to(x_start.device)
         continuous_sqrt_alpha_cumprod = continuous_sqrt_alpha_cumprod.view(b, -1)
 
-        noise = default(noise, lambda: natural_noise(x_start, self.mode=='interpolation'))
+        noise = default(noise, lambda: torch.randn_like(x_start))
 
         x_noisy = self.q_sample(x_start=x_start,continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise)
 
