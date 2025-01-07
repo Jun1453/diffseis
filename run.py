@@ -18,6 +18,7 @@ diffusion = GaussianDiffusion(
     image_size = image_size,
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
+    noise_mix_ratio = 0.5
 ).to("mps")#.cuda()
 
 trainer = Trainer(
