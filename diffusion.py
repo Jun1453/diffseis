@@ -19,9 +19,9 @@ from torchvision import transforms, utils
 from PIL import Image
 from scipy.signal import butter, filtfilt
 
-def natural_noise(shape_like, toggle_on=False, noise_mix_ratio=0.5): 
+def natural_noise(shape_like, noise_mix_ratio=None): 
     noise = torch.randn_like(shape_like)
-    if toggle_on:
+    if not noise_mix_ratio is None:
         for i in range(len(noise)):
             noise[i] = torch.from_numpy(bandpass(noise[i].cpu().numpy(), cutoff=(2.,10.), sample_rate=250, mix_input=noise_mix_ratio).copy())
     return noise
@@ -106,8 +106,8 @@ class GaussianDiffusion(nn.Module):
         channels,
         image_size,
         timesteps = 2000,
-        loss_type='l1',
-        noise_mix_ratio=0.5,
+        loss_type = 'l1',
+        noise_mix_ratio = None,
     ):
         super().__init__()
         self.mode = mode
@@ -212,7 +212,7 @@ class GaussianDiffusion(nn.Module):
         return self.p_sample_loop(x_in, mask)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
-        noise = default(noise, lambda: natural_noise(x_start, (self.mode=='interpolation') and (self.noise_mix_ratio is not None), self.noise_mix_ratio))
+        noise = default(noise, lambda: natural_noise(x_start, self.noise_mix_ratio))
 
         # random gama
         return (continuous_sqrt_alpha_cumprod * x_start + (1 - continuous_sqrt_alpha_cumprod**2).sqrt() * noise)
@@ -224,7 +224,7 @@ class GaussianDiffusion(nn.Module):
             np.random.uniform(self.sqrt_alphas_cumprod_prev[t-1],self.sqrt_alphas_cumprod_prev[t],size=b)).to(x_start.device)
         continuous_sqrt_alpha_cumprod = continuous_sqrt_alpha_cumprod.view(b, -1)
 
-        noise = default(noise, lambda: natural_noise(x_start, (self.mode=='interpolation') and (self.noise_mix_ratio is not None), self.noise_mix_ratio))
+        noise = default(noise, lambda: natural_noise(x_start, self.noise_mix_ratio))
 
         x_noisy = self.q_sample(x_start=x_start,continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise)
 
