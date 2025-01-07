@@ -212,7 +212,7 @@ class GaussianDiffusion(nn.Module):
         return self.p_sample_loop(x_in, mask)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
-        noise = default(noise, lambda: natural_noise(x_start, self.mode=='interpolation', self.noise_mix_ratio))
+        noise = default(noise, lambda: natural_noise(x_start, (self.mode=='interpolation') and (self.noise_mix_ratio is not None), self.noise_mix_ratio))
 
         # random gama
         return (continuous_sqrt_alpha_cumprod * x_start + (1 - continuous_sqrt_alpha_cumprod**2).sqrt() * noise)
@@ -224,7 +224,7 @@ class GaussianDiffusion(nn.Module):
             np.random.uniform(self.sqrt_alphas_cumprod_prev[t-1],self.sqrt_alphas_cumprod_prev[t],size=b)).to(x_start.device)
         continuous_sqrt_alpha_cumprod = continuous_sqrt_alpha_cumprod.view(b, -1)
 
-        noise = default(noise, lambda: natural_noise(x_start, self.mode=='interpolation', self.noise_mix_ratio))
+        noise = default(noise, lambda: natural_noise(x_start, (self.mode=='interpolation') and (self.noise_mix_ratio is not None), self.noise_mix_ratio))
 
         x_noisy = self.q_sample(x_start=x_start,continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise)
 
