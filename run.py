@@ -7,6 +7,7 @@ image_size = (64,256)
 
 model = UNet(
         in_channel=2,
+        out_channel=1,
         dropout=0.5
 ).cuda()
 
@@ -17,6 +18,7 @@ diffusion = GaussianDiffusion(
     image_size = image_size,
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
+    noise_mix_ratio = 0.5
 ).cuda()
 
 trainer = Trainer(
