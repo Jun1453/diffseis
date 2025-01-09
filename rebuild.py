@@ -23,7 +23,7 @@ model = UNet(
         dropout=0.5,
         image_size = 256,
         # attn_res=[64, 16]
-).to("mps")#.cuda()
+).cuda()
 
 diffusion = GaussianDiffusion(
     model,
@@ -33,9 +33,9 @@ diffusion = GaussianDiffusion(
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
     noise_mix_ratio = None
-).to("mps")#.cuda()
+).cuda()
 
-parameters = torch.load("/S/home00/G3506/p0814/diffseis/results/demultiple_0108-no_filt/model-final.pt", map_location=torch.device('mps'))['model']
+parameters = torch.load("/S/home00/G3506/p0814/diffseis/results/demultiple_0108-no_filt/model-final.pt", map_location=torch.device('cuda'))['model']
 
 
 del parameters['betas']
@@ -79,10 +79,6 @@ canvas_wt = np.ndarray(shape=(y_move*9+256, x_move*36+64))
 for i in range(370):
 
     if (i % train_batch_size == 0):
-        # img = next(dl)
-        # inputs = img[i%train_batch_size].to("mps")#.cuda()
-        # gt = img[1].to("mps")#.cuda()
-        # out = diffusion.inference(x_in=inputs)
         x_start, x_ = ds[i]
         x_start = torch.unsqueeze(x_start, dim=0)
         x_ = torch.unsqueeze(x_, dim=0)
@@ -94,7 +90,7 @@ for i in range(370):
             x_ = torch.unsqueeze(x_, dim=0)
             batch = torch.cat((batch, x_start), dim=0)
 
-        out = diffusion.inference(x_in=batch.to("mps"))
+        out = diffusion.inference(x_in=batch.cuda())
 
     mask = np.ones(image_size)
     if i % 37 > 0:
