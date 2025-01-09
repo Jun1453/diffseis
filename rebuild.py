@@ -10,7 +10,7 @@ from PIL import Image
 from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
-n=15
+n=34
 mode = "demultiple" #demultiple, interpolation, denoising
 # folder = './dataset/'+mode+'/data_train/'
 folder = 'dataset/'+mode+'/data_test/'
@@ -144,18 +144,18 @@ ax.imshow(canvas_inp, cmap="Greys")
 ax.set_aspect('auto')
 ax.set_axis_off()
 ax.set_title('Input')
-fig.savefig("rebuild_input.png", bbox_inches="tight")
+fig.savefig(f"rebuild_input_{n}.png", bbox_inches="tight")
 
 fig, ax = plt.subplots(1,1, figsize=(16,6))
 ax.imshow(canvas_out, cmap="Greys")
 ax.set_aspect('auto')
 ax.set_axis_off()
 ax.set_title('Output')
-fig.savefig("rebuild_output.png", bbox_inches="tight")
+fig.savefig(f"rebuild_output_{n}.png", bbox_inches="tight")
 
 fig, ax = plt.subplots(1,1, figsize=(16,6))
 ax.imshow(canvas_gt, cmap="Greys")
 ax.set_aspect('auto')
 ax.set_axis_off()
 ax.set_title('Ground Truth')
-fig.savefig("rebuild_gt.png", bbox_inches="tight")
+fig.savefig(f"rebuild_gt_{n}.png", bbox_inches="tight")
