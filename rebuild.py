@@ -10,6 +10,7 @@ from PIL import Image
 from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
+n=15
 mode = "demultiple" #demultiple, interpolation, denoising
 # folder = './dataset/'+mode+'/data_train/'
 folder = 'dataset/'+mode+'/data_test/'
@@ -72,12 +73,15 @@ ds = Dataset(folder, image_size=image_size, mode=mode)
 
 x_move = int(64*0.2)#int(image_size[0]/8)
 y_move = int(256*0.2)#int(image_size[1]/8)
-canvas_inp = np.ndarray(shape=(y_move*9+256, x_move*36+64))
-canvas_out = np.ndarray(shape=(y_move*9+256, x_move*36+64))
-canvas_wt = np.ndarray(shape=(y_move*9+256, x_move*36+64))
+canvas_gt= np.ndarray(shape=(y_move*9+256, x_move*36+64))
+canvas_inp = np.ndarray(shape=canvas_gt.shape)
+canvas_out = np.ndarray(shape=canvas_gt.shape)
+canvas_wt = np.ndarray(shape=canvas_gt.shape)
 
-for i in range(370):
-
+ds_len = len(ds)
+for i in range(37*31*(n+1)):
+# for i, (x_in) in enumerate(ds):
+    if i<37*31*n-(37*31*n%train_batch_size): continue
     if (i % train_batch_size == 0):
         # img = next(dl)
         # inputs = img[i%train_batch_size].to("mps")#.cuda()
@@ -87,14 +91,18 @@ for i in range(370):
         x_start = torch.unsqueeze(x_start, dim=0)
         x_ = torch.unsqueeze(x_, dim=0)
         batch = x_start
+        batch_gt = x_
 
-        for j in range(i+1,i+train_batch_size):
+        for j in range(i+1,min(i+train_batch_size,ds_len)):
             x_start, x_ = ds[j]
             x_start = torch.unsqueeze(x_start, dim=0)
             x_ = torch.unsqueeze(x_, dim=0)
             batch = torch.cat((batch, x_start), dim=0)
+            batch_gt = torch.cat((batch_gt, x_), dim=0)
 
         out = diffusion.inference(x_in=batch.to("mps"))
+    
+    if i<37*31*n: continue
 
     mask = np.ones(image_size)
     if i % 37 > 0:
@@ -103,10 +111,10 @@ for i in range(370):
     if i % 37 < 36:
         mask[-x_move:,:] = 0
         mask[-2*x_move:-x_move,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(image_size[1], axis=1), mask[-2*x_move:-x_move,:])
-    if i // 37 > 0:
+    if (i//37)%31 > 0:
         mask[:,:y_move] = 0
         mask[:,y_move:2*y_move] = np.minimum(np.linspace(0,1,y_move+2)[1:-1], mask[:,y_move:2*y_move])
-    if i // 37 < 9:
+    if (i//37)%31 < 30:
         mask[:,-y_move:] = 0
         mask[:,-2*y_move:-y_move] = np.minimum(np.linspace(1,0,y_move+2)[1:-1], mask[:,-2*y_move:-y_move])
     # if i == 0:
@@ -114,22 +122,24 @@ for i in range(370):
     #     plt.colorbar()
     #     # print(mask)
     x_loc = (i%37)*x_move
-    y_loc = (i//37)*y_move
+    y_loc = ((i//37)%31)*y_move
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (inputs[i%train_batch_size,0].cpu().detach().numpy()).T
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%train_batch_size,0].cpu().detach().numpy()).T
     # canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%train_batch_size+train_batch_size,0].cpu().detach().numpy()).T
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*batch[i%train_batch_size,0].cpu().detach().numpy()).T
     # canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(batch[i%train_batch_size,0].cpu().detach().numpy())).T
 
-    inp_2d = out[i%train_batch_size,0].cpu().detach().numpy()
+    inp_2d = batch[i%train_batch_size,0].cpu().detach().numpy()
+    gt_2d = batch_gt[i%train_batch_size,0].cpu().detach().numpy()
     out_2d = out[i%train_batch_size+train_batch_size,0].cpu().detach().numpy()
-    canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*inp_2d).T
-    canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(inp_2d)).T
+    canvas_gt[y_loc:y_loc+256,x_loc:x_loc+64] = gt_2d.T
+    canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = inp_2d.T
     canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*out_2d).T
+    canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(out_2d)).T
 
     # if i == 370-1: break
     # if i == train_batch_size-1: break
-canvas_inp /= canvas_wt
+# canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
 # print(i)
 
@@ -138,11 +148,18 @@ ax.imshow(canvas_inp, cmap="Greys")
 ax.set_aspect('auto')
 ax.set_axis_off()
 ax.set_title('Input')
-fig.savefig("rebuild_input.png")
+fig.savefig("rebuild_input.png", bbox_inches="tight")
 
 fig, ax = plt.subplots(1,1, figsize=(16,6))
 ax.imshow(canvas_out, cmap="Greys")
 ax.set_aspect('auto')
 ax.set_axis_off()
 ax.set_title('Output')
-fig.savefig("rebuild_output.png")
+fig.savefig("rebuild_output.png", bbox_inches="tight")
+
+fig, ax = plt.subplots(1,1, figsize=(16,6))
+ax.imshow(canvas_gt, cmap="Greys")
+ax.set_aspect('auto')
+ax.set_axis_off()
+ax.set_title('Ground Truth')
+fig.savefig("rebuild_gt.png", bbox_inches="tight")
