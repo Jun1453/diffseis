@@ -8,7 +8,7 @@ image_size = (64,256)
 model = UNet(
         in_channel=2,
         out_channel=1,
-        dropout=0.5
+        dropout=0.5,
         image_size = 256,
         # attn_res=[64, 16]
 ).cuda()
@@ -20,7 +20,7 @@ diffusion = GaussianDiffusion(
     image_size = image_size,
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
-    noise_mix_ratio = 5
+    noise_mix_ratio = 20 
 ).cuda()
 
 trainer = Trainer(
@@ -29,12 +29,13 @@ trainer = Trainer(
     folder = folder,
     image_size = image_size,
     train_batch_size = 32, #32 for A100; 16 for GTX
-    train_lr = 1e-4,
+    train_lr = 3e-5,
     train_num_steps = 100000,         # total training steps
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
-    save_and_sample_every=2500
+    save_and_sample_every=10000,
+    result_suffix = "-0.05_filt"
 )
 
 trainer.train()
