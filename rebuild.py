@@ -16,7 +16,7 @@ mode = "demultiple" #demultiple, interpolation, denoising
 folder = 'dataset/'+mode+'/data_test/'
 
 image_size = (64,256)
-train_batch_size = 32
+maximum_batch_size = 32
     
 model = UNet(
         in_channel=2,
@@ -81,8 +81,8 @@ canvas_wt = np.ndarray(shape=canvas_gt.shape)
 ds_len = len(ds)
 for i in range(37*31*(n+1)):
 # for i, (x_in) in enumerate(ds):
-    if i<37*31*n-(37*31*n%train_batch_size): continue
-    if (i % train_batch_size == 0):
+    if i<37*31*n-(37*31*n%maximum_batch_size): continue
+    if (i % maximum_batch_size == 0):
         # img = next(dl)
         # inputs = img[i%train_batch_size].to("mps")#.cuda()
         # gt = img[1].to("mps")#.cuda()
@@ -93,7 +93,9 @@ for i in range(37*31*(n+1)):
         batch = x_start
         batch_gt = x_
 
-        for j in range(i+1,min(i+train_batch_size,ds_len)):
+        end_of_batch = min(i+maximum_batch_size, ds_len)
+        actual_batch_size = end_of_batch-i
+        for j in range(i+1,end_of_batch):
             x_start, x_ = ds[j]
             x_start = torch.unsqueeze(x_start, dim=0)
             x_ = torch.unsqueeze(x_, dim=0)
@@ -123,22 +125,22 @@ for i in range(37*31*(n+1)):
     #     # print(mask)
     x_loc = (i%37)*x_move
     y_loc = ((i//37)%31)*y_move
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (inputs[i%train_batch_size,0].cpu().detach().numpy()).T
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%train_batch_size,0].cpu().detach().numpy()).T
-    # canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%train_batch_size+train_batch_size,0].cpu().detach().numpy()).T
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*batch[i%train_batch_size,0].cpu().detach().numpy()).T
-    # canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(batch[i%train_batch_size,0].cpu().detach().numpy())).T
+    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (inputs[i%actual_batch_size,0].cpu().detach().numpy()).T
+    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size,0].cpu().detach().numpy()).T
+    # canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size+actual_batch_size,0].cpu().detach().numpy()).T
+    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*batch[i%actual_batch_size,0].cpu().detach().numpy()).T
+    # canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(batch[i%actual_batch_size,0].cpu().detach().numpy())).T
 
-    inp_2d = batch[i%train_batch_size,0].cpu().detach().numpy()
-    gt_2d = batch_gt[i%train_batch_size,0].cpu().detach().numpy()
-    out_2d = out[i%train_batch_size+train_batch_size,0].cpu().detach().numpy()
+    inp_2d = batch[i%actual_batch_size,0].cpu().detach().numpy()
+    gt_2d = batch_gt[i%actual_batch_size,0].cpu().detach().numpy()
+    out_2d = out[i%actual_batch_size+actual_batch_size,0].cpu().detach().numpy()
     canvas_gt[y_loc:y_loc+256,x_loc:x_loc+64] = gt_2d.T
     canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = inp_2d.T
     canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*out_2d).T
     canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(out_2d)).T
 
     # if i == 370-1: break
-    # if i == train_batch_size-1: break
+    # if i == actual_batch_size-1: break
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
 # print(i)
