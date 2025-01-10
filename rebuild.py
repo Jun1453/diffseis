@@ -131,9 +131,9 @@ for i in range(37*31*(n+1)):
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*batch[i%actual_batch_size,0].cpu().detach().numpy()).T
     # canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(batch[i%actual_batch_size,0].cpu().detach().numpy())).T
 
-    inp_2d = batch[i%actual_batch_size,0].cpu().detach().numpy()
-    gt_2d = batch_gt[i%actual_batch_size,0].cpu().detach().numpy()
-    out_2d = out[i%actual_batch_size+actual_batch_size,0].cpu().detach().numpy()
+    inp_2d = batch[i%maximum_batch_size,0].cpu().detach().numpy()
+    gt_2d = batch_gt[i%maximum_batch_size,0].cpu().detach().numpy()
+    out_2d = out[i%maximum_batch_size+actual_batch_size,0].cpu().detach().numpy()
     canvas_gt[y_loc:y_loc+256,x_loc:x_loc+64] = gt_2d.T
     canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = inp_2d.T
     canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*out_2d).T
