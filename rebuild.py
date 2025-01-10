@@ -73,7 +73,7 @@ ds = Dataset(folder, image_size=image_size, mode=mode)
 
 x_move = int(64*0.2)#int(image_size[0]/8)
 y_move = int(256*0.2)#int(image_size[1]/8)
-canvas_gt= np.ndarray(shape=(y_move*9+256, x_move*36+64))
+canvas_gt= np.ndarray(shape=(y_move*30+256, x_move*36+64))
 canvas_inp = np.ndarray(shape=canvas_gt.shape)
 canvas_out = np.ndarray(shape=canvas_gt.shape)
 canvas_wt = np.ndarray(shape=canvas_gt.shape)
