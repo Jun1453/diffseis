@@ -10,7 +10,10 @@ from PIL import Image
 from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
-n=15
+n=34
+obs_num = 28
+xshift = (obs_num-1)*-2
+to_flip = True
 mode = "demultiple" #demultiple, interpolation, denoising
 # folder = './dataset/'+mode+'/data_train/'
 folder = 'dataset/'+mode+'/data_test/'
@@ -145,23 +148,61 @@ for i in range(37*31*(n+1)):
 canvas_out /= canvas_wt
 # print(i)
 
-fig, ax = plt.subplots(1,1, figsize=(16,6))
-ax.imshow(canvas_inp, cmap="Greys")
-ax.set_aspect('auto')
-ax.set_axis_off()
-ax.set_title('Input')
-fig.savefig("rebuild_input.png", bbox_inches="tight")
+# fig, ax = plt.subplots(1,1, figsize=(16,6))
+# ax.imshow(canvas_inp, cmap="Greys")
+# ax.set_aspect('auto')
+# ax.set_axis_off()
+# ax.set_title('Input')
+# fig.savefig("rebuild_input.png", bbox_inches="tight")
 
-fig, ax = plt.subplots(1,1, figsize=(16,6))
-ax.imshow(canvas_out, cmap="Greys")
-ax.set_aspect('auto')
-ax.set_axis_off()
-ax.set_title('Output')
-fig.savefig("rebuild_output.png", bbox_inches="tight")
+# fig, ax = plt.subplots(1,1, figsize=(16,6))
+# ax.imshow(canvas_out, cmap="Greys")
+# ax.set_aspect('auto')
+# ax.set_axis_off()
+# ax.set_title('Output')
+# fig.savefig("rebuild_output.png", bbox_inches="tight")
 
-fig, ax = plt.subplots(1,1, figsize=(16,6))
-ax.imshow(canvas_gt, cmap="Greys")
-ax.set_aspect('auto')
-ax.set_axis_off()
-ax.set_title('Ground Truth')
-fig.savefig("rebuild_gt.png", bbox_inches="tight")
+# fig, ax = plt.subplots(1,1, figsize=(16,6))
+# ax.imshow(canvas_gt, cmap="Greys")
+# ax.set_aspect('auto')
+# ax.set_axis_off()
+# ax.set_title('Ground Truth')
+# fig.savefig("rebuild_gt.png", bbox_inches="tight")
+
+# fig, ax = plt.subplots(1,1, figsize=(16,6))
+# ax.imshow(canvas_out - canvas_inp, cmap="Greys", extent=[-10, 90, 7, 0])
+# ax.set_aspect('auto')
+# ax.set_axis_on()
+# ax.set_title('Output')
+# fig.savefig("rebuild_output.png", bbox_inches="tight")
+
+# fig, ax = plt.subplots(1,1, figsize=(16,6))
+# ax.imshow(canvas_out - canvas_gt, cmap="Greys")
+# ax.set_aspect('auto')
+# ax.set_axis_off()
+# ax.set_title('Output - Ground Truth')
+# fig.savefig("rebuild_output-gt.png", bbox_inches="tight")
+
+data = lambda d: np.flip(d, axis=1) if to_flip else d
+fig, axs = plt.subplots(2,2, figsize=(16,10), gridspec_kw={'wspace': 0.1})
+axs[0,0].imshow(data(canvas_inp), cmap="Greys", extent=[-10+xshift, 90+xshift, 7, 0])
+axs[0,0].set_aspect('auto')
+axs[0,0].set_axis_on()
+axs[0,0].set_title('Input')
+axs[0,0].set_ylabel(' T - X/6.0 (sec)')
+axs[0,1].imshow(data(canvas_inp), cmap="Greys", extent=[-10+xshift, 90+xshift, 7, 0])
+axs[0,1].set_aspect('auto')
+axs[0,1].set_axis_on()
+axs[0,1].set_title('Ground Truth (Diversity Stack)')
+axs[1,0].imshow(data(canvas_inp), cmap="Greys", extent=[-10+xshift, 90+xshift, 7, 0])
+axs[1,0].set_aspect('auto')
+axs[1,0].set_axis_on()
+axs[1,0].set_title('Output')
+axs[1,0].set_xlabel('Offset (km)')
+axs[1,0].set_ylabel(' T - X/6.0 (sec)')
+axs[1,1].imshow(data(canvas_inp), cmap="Greys", extent=[-10+xshift, 90+xshift, 7, 0])
+axs[1,1].set_aspect('auto')
+axs[1,1].set_axis_on()
+axs[1,1].set_title('Output - Ground Truth')
+axs[1,1].set_xlabel('Offset (km)')
+fig.savefig(f"rebuild_4plts{-n}.png", bbox_inches="tight")
