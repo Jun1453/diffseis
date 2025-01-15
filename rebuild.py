@@ -11,6 +11,7 @@ from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
 n=34
+output_folder = '20k'
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
@@ -146,9 +147,9 @@ for i in range(37*31*(n+1)):
     # if i == actual_batch_size-1: break
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
-np.save(f'canvas_gt-{n}.npy', canvas_gt)
-np.save(f'canvas_inp-{n}.npy', canvas_inp) 
-np.save(f'canvas_out-{n}.npy', canvas_out)
+np.save(f'{output_folder}/canvas_gt-{n}.npy', canvas_gt)
+np.save(f'{output_folder}/canvas_inp-{n}.npy', canvas_inp) 
+np.save(f'{output_folder}/canvas_out-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))
