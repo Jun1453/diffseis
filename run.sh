@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#PBS -N diffseis_64x256_100k
+#PBS -N diffseis_64x256_200k
 #PBS -q gpu
 #PBS -b 1
 #PBS -r n
-#PBS -l elapstim_req=16:00:00
+#PBS -l elapstim_req=36:00:00
 #PBS -o stdout.%s.%j
 #PBS -e stderr.%s.%j
 #PBS --custom gpusetnum-lhost=1
@@ -20,4 +20,4 @@ conda activate diffseis-cuda
 #module load python torch
 
 
-python run.py
+python run-20k_step1k.py 
