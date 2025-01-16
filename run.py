@@ -2,7 +2,7 @@ from diffusion import GaussianDiffusion, Trainer
 from unet import UNet
 
 mode = "demultiple" #demultiple, interpolation, denoising
-folder = "dataset/"+mode+"/data_train/"
+folder = "dataset/"+mode+"/data_train_npy/"
 image_size = (64,256)
 
 model = UNet(
@@ -20,7 +20,7 @@ diffusion = GaussianDiffusion(
     image_size = image_size,
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
-    noise_mix_ratio = 5
+    noise_mix_ratio = None
 ).to("mps")#.cuda()
 
 trainer = Trainer(
@@ -28,6 +28,7 @@ trainer = Trainer(
     mode = mode,
     folder = folder,
     image_size = image_size,
+    file_ext='.npy',
     train_batch_size = 4, #32 for A100; 16 for GTX
     train_lr = 1e-4,
     train_num_steps = 20000,         # total training steps

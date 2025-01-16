@@ -244,18 +244,19 @@ class GaussianDiffusion(nn.Module):
 # dataset classes
 
 class Dataset(data.Dataset):
-    def __init__(self, folder, image_size, mode):
+    def __init__(self, folder, image_size, mode, file_ext='.png'):
         super().__init__()
         self.folder = folder
         self.image_size = image_size
         self.mode = mode
+        self.file_ext = file_ext
 
         self.transform = transforms.Compose([
             transforms.Resize(image_size),
             transforms.CenterCrop(image_size),
             transforms.ToTensor(),
             transforms.Lambda(lambda t: (t * 2) - 1)
-        ])
+        ]) if file_ext == '.png' else lambda x: torch.from_numpy(x).unsqueeze(dim=0)
 
         
     def __len__(self):
@@ -280,12 +281,12 @@ class Dataset(data.Dataset):
         return  mask
 
     def __getitem__(self, index):
-        data = self.folder+"data/"+str(index)+".png"
-        img_data = Image.open(data)
+        data = self.folder+"data/"+str(index)+self.file_ext
+        img_data = Image.open(data) if self.file_ext == '.png' else np.load(data)
 
         if self.mode == "demultiple":
-            label = self.folder+"labels/"+str(index)+".png"
-            img_label = Image.open(label)
+            label = self.folder+"labels/"+str(index)+self.file_ext
+            img_label = Image.open(label) if self.file_ext == '.png' else np.load(label)
             return self.transform(img_data), self.transform(img_label)
         elif self.mode == "interpolation":
             return self.irregular_mask(self.transform(img_data)), self.transform(img_data)
@@ -328,6 +329,7 @@ class Trainer(object):
         *,
         ema_decay = 0.999,
         image_size = (128,128),
+        file_ext = '.png',
         train_batch_size = 32,
         train_lr = 3e-6,
         train_num_steps = 100000,
@@ -354,7 +356,7 @@ class Trainer(object):
         self.gradient_accumulate_every = gradient_accumulate_every
         self.train_num_steps = train_num_steps
 
-        self.ds = Dataset(self.folder, image_size, mode)
+        self.ds = Dataset(self.folder, image_size, mode, file_ext)
         self.dl = cycle(data.DataLoader(self.ds, batch_size = train_batch_size, shuffle=True, pin_memory=True))
         self.opt = Adam(diffusion_model.parameters(), lr=train_lr)
 
