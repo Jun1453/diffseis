@@ -338,6 +338,7 @@ class Trainer(object):
         step_start_ema = 5000,
         update_ema_every = 1,
         save_and_sample_every = 10000,
+        save_and_sample_mode = 'one_rand',
         result_suffix=''
     ):
         super().__init__()
@@ -350,6 +351,7 @@ class Trainer(object):
 
         self.step_start_ema = step_start_ema
         self.save_and_sample_every = save_and_sample_every
+        self.save_and_sample_mode = save_and_sample_mode
 
         self.batch_size = train_batch_size
         self.image_size = diffusion_model.image_size
@@ -419,14 +421,17 @@ class Trainer(object):
                 self.step_ema()
             if (self.step == self.train_num_steps) or (self.step != 0 and self.step % self.save_and_sample_every == 0):
                 milestone = self.step // self.save_and_sample_every if self.step < self.train_num_steps else 'final'
-                inputs_ = torch.unsqueeze(inputs[0], dim=0)
-                if self.mode == "interpolation":
-                    gt_ = torch.unsqueeze(gt[0], dim=0)
-                    all_images = self.ema_model.inference(x_in=gt_, mask=inputs_)
+                if self.save_and_sample_mode == 'one_rand':
+                    inputs_ = torch.unsqueeze(inputs[0], dim=0)
+                    if self.mode == "interpolation":
+                        gt_ = torch.unsqueeze(gt[0], dim=0)
+                        all_images = self.ema_model.inference(x_in=gt_, mask=inputs_)
+                    else:
+                        all_images = self.ema_model.inference(x_in=inputs_)
+                    all_images = (all_images + 1) * 0.5
+                    utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = 6)
                 else:
-                    all_images = self.ema_model.inference(x_in=inputs_)
-                all_images = (all_images + 1) * 0.5
-                utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = 6)
+                    pass
                 self.save(milestone)
 
             self.step += 1
