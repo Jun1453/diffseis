@@ -38,4 +38,5 @@ trainer = Trainer(
     save_and_sample_every=2500
 )
 
-trainer.train()
+if __name__ == '__main__':
+    trainer.train()

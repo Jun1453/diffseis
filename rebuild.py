@@ -1,6 +1,8 @@
 import os
+import sys
 import torch
 import random
+import importlib
 from torch.utils import data
 from torchvision import transforms
 import numpy as np
@@ -10,37 +12,20 @@ from PIL import Image
 from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
-n=34
-output_folder = '20k'
+run_path = sys.argv[1]
+n = sys.argv[2]
+model_name = sys.argv[3] if len(sys.argv) > 3 else "model-final.pt"
+
+run = importlib.util.module_from_spec(run_path)
+work_folder = run.trainer.results_folder
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
-mode = "demultiple" #demultiple, interpolation, denoising
-# folder = './dataset/'+mode+'/data_train/'
-folder = 'dataset/'+mode+'/data_test/'
-
-image_size = (64,256)
+testset_folder = 'dataset/'+run.mode+'/data_test/'
+tile_info = importlib.util.module_from_spec(str(testset_folder/'tile_info.py'))
 maximum_batch_size = 32
     
-model = UNet(
-        in_channel=2,
-        out_channel=1,
-        dropout=0.5,
-        image_size = 256,
-        # attn_res=[64, 16]
-).to("mps")#.cuda()
-
-diffusion = GaussianDiffusion(
-    model,
-    mode = mode,
-    channels = 1,
-    image_size = image_size,
-    timesteps = 2000,
-    loss_type = 'l2', # L1 or L2
-    noise_mix_ratio = None
-).to("mps")#.cuda()
-
-parameters = torch.load("/S/home00/G3506/p0814/diffseis/results/demultiple_0108-no_filt/model-final.pt", map_location=torch.device('mps'))['model']
+parameters = torch.load(str(work_folder/model_name), map_location=torch.device('mps'))['model']
 
 
 del parameters['betas']
@@ -70,22 +55,24 @@ for key, value in parameters.items():
 for i in range(len(keys)):
     change_key(parameters, keys[i], keys[i][11:])
     
-model.load_state_dict(parameters)
+run.model.load_state_dict(parameters)
 
 
-ds = Dataset(folder, image_size=image_size, mode=mode)
+ds = Dataset(testset_folder, image_size=run.image_size, mode=run.mode)
 
-x_move = int(64*0.2)#int(image_size[0]/8)
-y_move = int(256*0.2)#int(image_size[1]/8)
-canvas_gt= np.ndarray(shape=(y_move*30+256, x_move*36+64))
+x_len = run.image_size[0]
+y_len = run.image_size[1]
+x_move = int(x_len*tile_info.x_move_ratio)#int(image_size[0]/8)
+y_move = int(y_len*tile_info.y_move_ratio)#int(image_size[1]/8)
+canvas_gt= np.ndarray(shape=(y_move*(tile_info.y_tile-1)+y_len, x_move*(tile_info.x_tile-1)+x_len))
 canvas_inp = np.ndarray(shape=canvas_gt.shape)
 canvas_out = np.ndarray(shape=canvas_gt.shape)
 canvas_wt = np.ndarray(shape=canvas_gt.shape)
 
 ds_len = len(ds)
-for i in range(37*31*(n+1)):
+for i in range(tile_info.x_tile*tile_info.y_tile*(n+1)):
 # for i, (x_in) in enumerate(ds):
-    if i<37*31*n-(37*31*n%maximum_batch_size): continue
+    if i<tile_info.x_tile*tile_info.y_tile*n-(tile_info.x_tile*tile_info.y_tile*n%maximum_batch_size): continue
     if (i % maximum_batch_size == 0):
         # img = next(dl)
         # inputs = img[i%train_batch_size].to("mps")#.cuda()
@@ -106,29 +93,29 @@ for i in range(37*31*(n+1)):
             batch = torch.cat((batch, x_start), dim=0)
             batch_gt = torch.cat((batch_gt, x_), dim=0)
 
-        out = diffusion.inference(x_in=batch.to("mps"))
+        out = run.diffusion.inference(x_in=batch.to("mps"))
     
-    if i<37*31*n: continue
+    if i<tile_info.x_tile*tile_info.y_tile*n: continue
 
-    mask = np.ones(image_size)
-    if i % 37 > 0:
+    mask = np.ones(run.image_size)
+    if i % tile_info.x_tile > 0:
         mask[:x_move,:] = 0
-        mask[x_move:2*x_move,:] = np.minimum(np.linspace(0,1,x_move+2)[1:-1][:,np.newaxis].repeat(image_size[1], axis=1), mask[x_move:2*x_move,:])
-    if i % 37 < 36:
+        mask[x_move:2*x_move,:] = np.minimum(np.linspace(0,1,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[x_move:2*x_move,:])
+    if i % tile_info.x_tile < tile_info.x_tile-1:
         mask[-x_move:,:] = 0
-        mask[-2*x_move:-x_move,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(image_size[1], axis=1), mask[-2*x_move:-x_move,:])
-    if (i//37)%31 > 0:
+        mask[-2*x_move:-x_move,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[-2*x_move:-x_move,:])
+    if (i//tile_info.x_tile)%tile_info.y_tile > 0:
         mask[:,:y_move] = 0
         mask[:,y_move:2*y_move] = np.minimum(np.linspace(0,1,y_move+2)[1:-1], mask[:,y_move:2*y_move])
-    if (i//37)%31 < 30:
+    if (i//tile_info.x_tile)%tile_info.y_tile < tile_info.y_tile-1:
         mask[:,-y_move:] = 0
         mask[:,-2*y_move:-y_move] = np.minimum(np.linspace(1,0,y_move+2)[1:-1], mask[:,-2*y_move:-y_move])
     # if i == 0:
     #     plt.imshow(mask.T)
     #     plt.colorbar()
     #     # print(mask)
-    x_loc = (i%37)*x_move
-    y_loc = ((i//37)%31)*y_move
+    x_loc = (i%tile_info.x_tile)*x_move
+    y_loc = ((i//tile_info.x_tile)%tile_info.y_tile)*y_move
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (inputs[i%actual_batch_size,0].cpu().detach().numpy()).T
     # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size,0].cpu().detach().numpy()).T
     # canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size+actual_batch_size,0].cpu().detach().numpy()).T
@@ -138,18 +125,18 @@ for i in range(37*31*(n+1)):
     inp_2d = batch[i%maximum_batch_size,0].cpu().detach().numpy()
     gt_2d = batch_gt[i%maximum_batch_size,0].cpu().detach().numpy()
     out_2d = out[i%maximum_batch_size+actual_batch_size,0].cpu().detach().numpy()
-    canvas_gt[y_loc:y_loc+256,x_loc:x_loc+64] = gt_2d.T
-    canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = inp_2d.T
-    canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*out_2d).T
-    canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(out_2d)).T
+    canvas_gt[y_loc:y_loc+y_len,x_loc:x_loc+x_len] = gt_2d.T
+    canvas_inp[y_loc:y_loc+y_len,x_loc:x_loc+x_len] = inp_2d.T
+    canvas_out[y_loc:y_loc+y_len,x_loc:x_loc+x_len] += (mask*out_2d).T
+    canvas_wt[y_loc:y_loc+y_len,x_loc:x_loc+x_len] += (mask*np.ones_like(out_2d)).T
 
     # if i == 370-1: break
     # if i == actual_batch_size-1: break
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
-np.save(f'{output_folder}/canvas_gt-{n}.npy', canvas_gt)
-np.save(f'{output_folder}/canvas_inp-{n}.npy', canvas_inp) 
-np.save(f'{output_folder}/canvas_out-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas_gt-{n}.npy', canvas_gt)
+np.save(f'{work_folder}/canvas_inp-{n}.npy', canvas_inp) 
+np.save(f'{work_folder}/canvas_out-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))
