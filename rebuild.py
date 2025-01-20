@@ -13,7 +13,7 @@ from unet import UNet
 from diffusion import GaussianDiffusion, Trainer, Dataset
 
 run_path = sys.argv[1]
-n = sys.argv[2]
+n = int(sys.argv[2])
 model_name = sys.argv[3] if len(sys.argv) > 3 else "model-final.pt"
 
 run = importfile(run_path)
@@ -21,8 +21,8 @@ work_folder = run.trainer.results_folder
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
-testset_folder = 'dataset/'+run.mode+'/data_test/'
-tile_info = importfile(str(testset_folder/'tile_info.py'))
+testset_folder = 'dataset/'+run.mode+'/data_test_npy/'
+tile_info = importfile(str(testset_folder+'tile_info.py'))
 maximum_batch_size = 32
     
 parameters = torch.load(str(work_folder/model_name), map_location=torch.device('cuda'))['model']

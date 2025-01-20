@@ -20,4 +20,4 @@ conda activate diffseis-cuda
 #module load python torch
 
 
-python run-20k_step1k.py 
+python run.py 
