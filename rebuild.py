@@ -93,7 +93,7 @@ for i in range(tile_info.x_tile*tile_info.y_tile*(n+1)):
             batch = torch.cat((batch, x_start), dim=0)
             batch_gt = torch.cat((batch_gt, x_), dim=0)
 
-        out = run.diffusion.inference(x_in=batch.to("mps"))
+        out = run.diffusion.inference(x_in=batch.to("mps"), clip_denoised=False)
     
     if i<tile_info.x_tile*tile_info.y_tile*n: continue
 

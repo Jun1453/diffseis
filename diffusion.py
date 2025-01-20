@@ -188,7 +188,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean + noise * (0.5 * model_log_variance).exp()
     
     @torch.no_grad()
-    def p_sample_loop(self, x_in, mask=None):
+    def p_sample_loop(self, x_in, mask=None, clip_denoised=True):
         device = self.betas.device
         x_cond = x_in
         if mask is not None:  
@@ -198,7 +198,7 @@ class GaussianDiffusion(nn.Module):
         img = torch.randn(shape, device=device)
         ret_img = x_cond
         for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, i, condition_x=x_cond)
+            img = self.p_sample(img, i, clip_denoised=clip_denoised, condition_x=x_cond)
             if mask is not None:
                 img = x_cond + img*(1.-mask)
             
@@ -208,8 +208,8 @@ class GaussianDiffusion(nn.Module):
         return ret_img
     
     @torch.no_grad()
-    def inference(self, x_in, mask=None):
-        return self.p_sample_loop(x_in, mask)
+    def inference(self, x_in, mask=None, clip_denoised=True):
+        return self.p_sample_loop(x_in, mask, clip_denoised)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
         noise = default(noise, lambda: natural_noise(x_start, self.noise_mix_ratio))
@@ -421,15 +421,19 @@ class Trainer(object):
                 self.step_ema()
             if (self.step == self.train_num_steps) or (self.step != 0 and self.step % self.save_and_sample_every == 0):
                 milestone = self.step // self.save_and_sample_every if self.step < self.train_num_steps else 'final'
+                is_output_png = self.ds.file_ext == '.png'
                 if self.save_and_sample_mode == 'one_rand':
                     inputs_ = torch.unsqueeze(inputs[0], dim=0)
                     if self.mode == "interpolation":
                         gt_ = torch.unsqueeze(gt[0], dim=0)
-                        all_images = self.ema_model.inference(x_in=gt_, mask=inputs_)
+                        all_images = self.ema_model.inference(x_in=gt_, mask=inputs_, clip_denoised=is_output_png)
                     else:
-                        all_images = self.ema_model.inference(x_in=inputs_)
-                    all_images = (all_images + 1) * 0.5
-                    utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = 6)
+                        all_images = self.ema_model.inference(x_in=inputs_, clip_denoised=is_output_png)
+
+                    if is_output_png:
+                        all_images = (all_images + 1) * 0.5
+                        utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = 6)
+                    else: np.save(str(self.results_folder / f'sample-{milestone}.npy'), all_images)
                 else:
                     pass
                 self.save(milestone)
