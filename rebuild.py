@@ -2,7 +2,7 @@ import os
 import sys
 import torch
 import random
-import importlib
+from pydoc import importfile
 from torch.utils import data
 from torchvision import transforms
 import numpy as np
@@ -16,13 +16,13 @@ run_path = sys.argv[1]
 n = sys.argv[2]
 model_name = sys.argv[3] if len(sys.argv) > 3 else "model-final.pt"
 
-run = importlib.util.module_from_spec(run_path)
+run = importfile(run_path)
 work_folder = run.trainer.results_folder
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
 testset_folder = 'dataset/'+run.mode+'/data_test/'
-tile_info = importlib.util.module_from_spec(str(testset_folder/'tile_info.py'))
+tile_info = importfile(str(testset_folder/'tile_info.py'))
 maximum_batch_size = 32
     
 parameters = torch.load(str(work_folder/model_name), map_location=torch.device('mps'))['model']
@@ -58,7 +58,7 @@ for i in range(len(keys)):
 run.model.load_state_dict(parameters)
 
 
-ds = Dataset(testset_folder, image_size=run.image_size, mode=run.mode)
+ds = Dataset(testset_folder, image_size=run.image_size, mode=run.mode, file_ext=tile_info.file_ext)
 
 x_len = run.image_size[0]
 y_len = run.image_size[1]
@@ -136,7 +136,7 @@ for i in range(tile_info.x_tile*tile_info.y_tile*(n+1)):
 canvas_out /= canvas_wt
 np.save(f'{work_folder}/canvas_gt-{n}.npy', canvas_gt)
 np.save(f'{work_folder}/canvas_inp-{n}.npy', canvas_inp) 
-np.save(f'{work_folder}/canvas_out-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))
