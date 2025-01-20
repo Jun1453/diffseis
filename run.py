@@ -39,4 +39,5 @@ trainer = Trainer(
     result_suffix = "-0.05_filt"
 )
 
-trainer.train()
+if __name__ == '__main__':
+    trainer.train()
