@@ -433,7 +433,7 @@ class Trainer(object):
                     if is_output_png:
                         all_images = (all_images + 1) * 0.5
                         utils.save_image(all_images, str(self.results_folder / f'sample-{milestone}.png'), nrow = 6)
-                    else: np.save(str(self.results_folder / f'sample-{milestone}.npy'), all_images)
+                    else: np.save(str(self.results_folder / f'sample-{milestone}.npy'), all_images.cpu().detach().numpy())
                 else:
                     pass
                 self.save(milestone)
