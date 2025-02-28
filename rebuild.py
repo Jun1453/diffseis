@@ -21,9 +21,9 @@ work_folder = run.trainer.results_folder
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
-testset_folder = 'dataset/'+run.mode+'/data_test/'
+testset_folder = 'dataset/'+run.mode+'/data_otj_test/'
 tile_info = importfile(str(testset_folder+'tile_info.py'))
-maximum_batch_size = 32
+maximum_batch_size = 16
     
 parameters = torch.load(str(work_folder/model_name), map_location=torch.device('mps'))['model']
 
@@ -134,9 +134,9 @@ for i in range(tile_info.x_tile*tile_info.y_tile*(n+1)):
     # if i == actual_batch_size-1: break
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
-np.save(f'{work_folder}/canvas_gt-{n}.npy', canvas_gt)
-np.save(f'{work_folder}/canvas_inp-{n}.npy', canvas_inp) 
-np.save(f'{work_folder}/canvas_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas-ojt_gt-{n}.npy', canvas_gt)
+np.save(f'{work_folder}/canvas-ojt_inp-{n}.npy', canvas_inp) 
+np.save(f'{work_folder}/canvas-ojt_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))

@@ -367,7 +367,7 @@ class Trainer(object):
         self.amp = amp
         self.scaler = GradScaler(enabled = amp)
         
-        results_folder = './results_'+str(self.mode)+str(result_suffix)
+        results_folder = './results/'+str(self.mode)+str(result_suffix)
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok = True)

@@ -30,12 +30,13 @@ trainer = Trainer(
     image_size = image_size,
     file_ext='.npy',
     train_batch_size = 4, #32 for A100; 16 for GTX
-    train_lr = 1e-4,
+    train_lr = 3e-6,
     train_num_steps = 2500,         # total training steps
-    gradient_accumulate_every = 2,    # gradient accumulation steps
+    gradient_accumulate_every = 8,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
-    save_and_sample_every=2500
+    save_and_sample_every=2500,
+    result_suffix = '0116-waveform'
 )
 
 if __name__ == '__main__':
