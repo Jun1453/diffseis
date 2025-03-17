@@ -2,7 +2,7 @@ from diffusion import GaussianDiffusion, Trainer
 from unet import UNet
 
 mode = "demultiple" #demultiple, interpolation, denoising
-folder = "dataset/"+mode+"/data_train_npy/"
+folder = "dataset/"+mode+"/data_train_refine_npy/"
 image_size = (64,256)
 
 model = UNet(
@@ -29,14 +29,14 @@ trainer = Trainer(
     folder = folder,
     image_size = image_size,
     file_ext='.npy',
-    train_batch_size = 4, #32 for A100; 16 for GTX
+    train_batch_size = 16, #32 for A100; 16 for GTX
     train_lr = 3e-6,
-    train_num_steps = 2500,         # total training steps
-    gradient_accumulate_every = 8,    # gradient accumulation steps
+    train_num_steps = 200000,         # total training steps
+    gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
-    save_and_sample_every=2500,
-    result_suffix = '0116-waveform'
+    save_and_sample_every=25000,
+    result_suffix = '0309-waveform'
 )
 
 if __name__ == '__main__':
