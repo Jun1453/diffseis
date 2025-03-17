@@ -122,10 +122,13 @@ def diversity_stack(z_list, x_list, prefilter=lambda z: highpass(z, 2, 250), fir
                 end = start+250
                 
             if (abs(offsets[i][j]) > 6) or ((abs(offsets[i][j]) > 2.65) and (end<start+275+(125*max(np.amin(10+offsets[i])/-40,1)))):
-                noise[i,j] = np.mean(np.abs(cube[i,start:end,j]))
+                # noise[i,j] = np.mean(np.abs(cube[i,start:end,j]))
+                noise[i,j] = np.sqrt(np.mean(cube[i,start:end,j]**2))
             else:
-                noise[i,j] = np.mean(np.abs(cube[i,:50,j]))
+                # noise[i,j] = np.mean(np.abs(cube[i,:50,j]))
+                noise[i,j] = np.sqrt(np.mean(cube[i,:50,j]**2))
             
-            cube[i,:,j] /= noise[i,j]
+            # cube[i,:,j] /= noise[i,j]
+            cube[i,:,j] *= ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
     cube_stacked = np.sum(cube,axis=0)
     return cube_stacked
