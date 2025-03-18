@@ -209,7 +209,9 @@ class Profiles(np.ndarray):
         return cls(npzfile['data'],
                   sampling_rate=npzfile['sampling_rate'].item(),
                   filter_history=list(npzfile['filter_history']),
-                  reduction_vel=npzfile['reduction_vel'].item())
+                  reduction_vel=npzfile['reduction_vel'].item(),
+                  offsets=npzfile['offsets'],
+                  first_arrival_reference=npzfile['first_arrival_reference'])
     
     def get_xyz(self, raw, offset, sample_num):
         x = np.array([offset]*(sample_num))
@@ -298,3 +300,123 @@ class Profiles(np.ndarray):
             print(f"Image saved: ({count}/{initial_count+count}) units with {len(offset_loop)} on offset axis and {len(time_loop)} on time axis")
             initial_count += count
         return initial_count
+
+    def fragmentize(self, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
+        """return iterable dataset of 2-d array fragments for pytorch dataloader"""
+        return self.Fragment(self, unit_size=unit_size, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
+    
+    class Fragment(data.Dataset):
+        def __init__(self, profiles, unit_size: tuple, x_move: int, y_move: int):
+            self.profiles = profiles
+            self.unit_size = unit_size
+            self.x_move = x_move
+            self.y_move = y_move
+            self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
+            self.y_tile = 1 + (profiles.shape[1]-unit_size[1])//y_move
+            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[1], unit_size[0]))
+
+            for i in range(self.fragments.shape[0]):
+                num_profile = i // (self.x_tile * self.y_tile)
+                num_x_tile = (i % (self.x_tile * self.y_tile)) % self.x_tile
+                num_y_tile = (i % (self.x_tile * self.y_tile)) // self.x_tile
+                loc_x_start = num_x_tile * x_move
+                loc_y_start = num_y_tile * y_move
+                self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+self.unit_size[1], loc_x_start:loc_x_start+self.unit_size[0]]
+        
+        def __len__(self):
+            return self.profiles.shape[0] * self.x_tile * self.y_tile
+        
+        def __getitem__(self, key):
+            return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0)
+        
+        def __setitem__(self, key, value):
+            self.fragments[key] = value
+        
+        def rebuild(self, x_move_factor=None, y_move_factor=None, x_move=None, y_move=None):
+            if x_move_factor is not None:
+                rebuild_x_move = int(self.x_move * x_move_factor)
+            elif x_move is not None:
+                rebuild_x_move = x_move
+            else:
+                rebuild_x_move = self.x_move
+
+            if x_move_factor is not None:
+                rebuild_y_move = int(self.y_move * y_move_factor)
+            elif y_move is not None:
+                rebuild_y_move = y_move
+            else:
+                rebuild_y_move = self.y_move
+            
+            rebuilt_x_size = (self.unit_size[0]+self.x_move*(self.x_tile-1))
+            rebuilt_y_size = (self.unit_size[1]+self.y_move*(self.y_tile-1))
+            rebuilt_profiles = type(self.profiles)(np.zeros((self.profiles.shape[0], rebuilt_y_size, rebuilt_x_size)),
+                                                    first_arrival_reference=self.profiles.first_arrival_reference,
+                                                    sampling_rate=self.profiles.sampling_rate,
+                                                    filter_history=self.profiles.filter_history,
+                                                    reduction_vel=self.profiles.reduction_vel,
+                                                    offsets=self.profiles.offsets)
+            
+            for i in range(self.profiles.shape[0]):
+                weight = np.zeros((rebuilt_y_size, rebuilt_x_size))
+                for j in list(range(0, self.y_tile-1, rebuild_y_move//self.y_move))+[self.y_tile-1]:
+                    loc_y_start = j * self.y_move
+                    loc_y_end = loc_y_start+self.unit_size[1]
+                    for k in list(range(0, self.x_tile-1, rebuild_x_move//self.x_move))+[self.x_tile-1]:
+                        loc_x_start = k * self.x_move
+                        loc_x_end = loc_x_start+self.unit_size[0]
+
+                        index = k + j*self.x_tile + i*self.x_tile*self.y_tile
+                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += self[index].numpy()[0]
+                        weight[loc_y_start:loc_y_end, loc_x_start:loc_x_end] += np.ones((self.unit_size[1], self.unit_size[0]))
+                    
+            
+            return rebuilt_profiles/weight
+
+        def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda'):
+            parameters = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)['model']
+
+            del parameters['betas']
+            del parameters['alphas_cumprod']
+            del parameters['alphas_cumprod_prev']
+            del parameters['sqrt_alphas_cumprod']
+            del parameters['sqrt_one_minus_alphas_cumprod']
+            del parameters['log_one_minus_alphas_cumprod']
+            del parameters['sqrt_recip_alphas_cumprod']
+            del parameters['sqrt_recipm1_alphas_cumprod']
+            del parameters['posterior_variance']
+            del parameters['posterior_log_variance_clipped']
+            del parameters['posterior_mean_coef1']
+            del parameters['posterior_mean_coef2']
+
+
+            def change_key(self, old, new):
+                #copy = self.copy()
+                for _ in range(len(self)):
+                    k, v = self.popitem(False)
+                    self[new if old == k else k] = v
+                    
+            keys = []
+            for key, value in parameters.items():
+                keys.append(key)
+                
+            for i in range(len(keys)):
+                change_key(parameters, keys[i], keys[i][11:])
+                
+            ddpm.denoise_fn.load_state_dict(parameters)
+            dl = data.DataLoader(self, batch_size=batch_size, pin_memory=True)
+
+
+            count = 0
+            results = type(self)(profiles=self.profiles,
+                                    unit_size=self.unit_size,
+                                    x_move=self.x_move,
+                                    y_move=self.y_move)
+            for input_data in dl:
+                output_data = ddpm.inference(x_in=input_data.to(device), clip_denoised=False)
+                for i in range(len(input_data),2*len(input_data)):
+                    results[count] = output_data[i,0].cpu().detach()
+                    count += 1
+            # [ddpm.inference(x_in=input_data.to(device), clip_denoised=False)[i,0].cpu().detach().numpy() for input_data in dl for i in range(len(input_data),2*len(input_data))]
+
+
+            return results
