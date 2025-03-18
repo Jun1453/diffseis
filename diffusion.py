@@ -11,6 +11,7 @@ import random
 
 from torch.utils import data
 from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast  # Updated import
 import os
 
 from pathlib import Path
@@ -407,8 +408,8 @@ class Trainer(object):
                 inputs = img[0].to("mps")#.cuda()
                 gt = img[1].to("mps")#.cuda()
                 
-                with autocast(enabled = self.amp):
-                    loss = self.model(inputs, gt).to("mps")#.cuda()
+                with autocast('mps'):  # Updated usage
+                    loss = self.model(inputs, gt).to("mps")
                     self.scaler.scale(loss / self.gradient_accumulate_every).backward()
 
                 print(f'{self.step}: {loss.item()}')
