@@ -15,13 +15,14 @@ from diffusion import GaussianDiffusion, Trainer, Dataset
 run_path = sys.argv[1]
 n = int(sys.argv[2])
 model_name = sys.argv[3] if len(sys.argv) > 3 else "model-final.pt"
+playback_speed = sys.argv[4] if len(sys.argv) > 4 else 1
 
 run = importfile(run_path)
 work_folder = run.trainer.results_folder
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
-testset_folder = 'dataset/'+run.mode+'/data_test/'
+testset_folder = 'dataset/'+run.mode+'/data_test_allstn_npy/'
 tile_info = importfile(str(testset_folder+'tile_info.py'))
 maximum_batch_size = 16
     
@@ -68,75 +69,90 @@ canvas_gt= np.ndarray(shape=(y_move*(tile_info.y_tile-1)+y_len, x_move*(tile_inf
 canvas_inp = np.ndarray(shape=canvas_gt.shape)
 canvas_out = np.ndarray(shape=canvas_gt.shape)
 canvas_wt = np.ndarray(shape=canvas_gt.shape)
+double_marigin = playback_speed<3
 
 ds_len = len(ds)
-for i in range(tile_info.x_tile*tile_info.y_tile*(n+1)):
-# for i, (x_in) in enumerate(ds):
-    if i<tile_info.x_tile*tile_info.y_tile*n-(tile_info.x_tile*tile_info.y_tile*n%maximum_batch_size): continue
-    if (i % maximum_batch_size == 0):
-        # img = next(dl)
-        # inputs = img[i%train_batch_size].to("mps")#.cuda()
-        # gt = img[1].to("mps")#.cuda()
-        # out = diffusion.inference(x_in=inputs)
-        x_start, x_ = ds[i]
-        x_start = torch.unsqueeze(x_start, dim=0)
-        x_ = torch.unsqueeze(x_, dim=0)
-        batch = x_start
-        batch_gt = x_
+# jump to target window num
+ds_window_num = tile_info.x_tile*tile_info.y_tile*n
+ds_end_num = ds_window_num+tile_info.x_tile*tile_info.y_tile-1
 
-        end_of_batch = min(i+maximum_batch_size, ds_len)
-        actual_batch_size = end_of_batch-i
-        for j in range(i+1,end_of_batch):
-            x_start, x_ = ds[j]
-            x_start = torch.unsqueeze(x_start, dim=0)
-            x_ = torch.unsqueeze(x_, dim=0)
-            batch = torch.cat((batch, x_start), dim=0)
-            batch_gt = torch.cat((batch_gt, x_), dim=0)
+# initialize
+current_batch_size = 0
+x_loc = np.zeros(maximum_batch_size, dtype=int)
+y_loc = np.zeros(maximum_batch_size, dtype=int)
 
-        out = run.diffusion.inference(x_in=batch.to("mps"), clip_denoised=False)
+while True:
+    # get location for the computing window
+    x_loc[current_batch_size] = int((ds_window_num%tile_info.x_tile)*x_move)
+    y_loc[current_batch_size] = int(((ds_window_num//tile_info.x_tile)%tile_info.y_tile)*y_move)
+
+    # load data skipping overlapping windows if set on
+    if ((x_loc[current_batch_size]%(x_move*playback_speed)==0) and \
+        ((y_loc[current_batch_size]%(y_move*playback_speed)==0) or (y_loc[current_batch_size]==0) or (y_loc[current_batch_size]+y_len==canvas_gt.shape[0]))) \
+        or ((y_loc[current_batch_size]%(y_move*playback_speed)==0) and \
+        ((x_loc[current_batch_size]==0) or (x_loc[current_batch_size]+x_len==canvas_gt.shape[1]))):
+
+        x_in, x_gt = ds[ds_window_num]
+        x_in = torch.unsqueeze(x_in, dim=0)
+        x_gt = torch.unsqueeze(x_gt, dim=0)
+        # start a new batch when empty or concatenate elsewise
+        batch_in = x_in if current_batch_size == 0 else torch.cat((batch_in, x_in), dim=0)
+        batch_gt = x_gt if current_batch_size == 0 else torch.cat((batch_gt, x_gt), dim=0)
+        current_batch_size += 1
     
-    if i<tile_info.x_tile*tile_info.y_tile*n: continue
+    # get output matrix when full or before break
+    if (ds_window_num+1 >= ds_end_num) or (current_batch_size == maximum_batch_size):
+        out = run.diffusion.inference(x_in=batch_in.to("mps"), clip_denoised=False)
 
-    mask = np.ones(run.image_size)
-    if i % tile_info.x_tile > 0:
-        mask[:x_move,:] = 0
-        mask[x_move:2*x_move,:] = np.minimum(np.linspace(0,1,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[x_move:2*x_move,:])
-    if i % tile_info.x_tile < tile_info.x_tile-1:
-        mask[-x_move:,:] = 0
-        mask[-2*x_move:-x_move,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[-2*x_move:-x_move,:])
-    if (i//tile_info.x_tile)%tile_info.y_tile > 0:
-        mask[:,:y_move] = 0
-        mask[:,y_move:2*y_move] = np.minimum(np.linspace(0,1,y_move+2)[1:-1], mask[:,y_move:2*y_move])
-    if (i//tile_info.x_tile)%tile_info.y_tile < tile_info.y_tile-1:
-        mask[:,-y_move:] = 0
-        mask[:,-2*y_move:-y_move] = np.minimum(np.linspace(1,0,y_move+2)[1:-1], mask[:,-2*y_move:-y_move])
-    # if i == 0:
-    #     plt.imshow(mask.T)
-    #     plt.colorbar()
-    #     # print(mask)
-    x_loc = (i%tile_info.x_tile)*x_move
-    y_loc = ((i//tile_info.x_tile)%tile_info.y_tile)*y_move
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (inputs[i%actual_batch_size,0].cpu().detach().numpy()).T
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size,0].cpu().detach().numpy()).T
-    # canvas_out[y_loc:y_loc+256,x_loc:x_loc+64] = (mask*out[i%actual_batch_size+actual_batch_size,0].cpu().detach().numpy()).T
-    # canvas_inp[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*batch[i%actual_batch_size,0].cpu().detach().numpy()).T
-    # canvas_wt[y_loc:y_loc+256,x_loc:x_loc+64] += (mask*np.ones_like(batch[i%actual_batch_size,0].cpu().detach().numpy())).T
+        for i in range(current_batch_size):
+            inp_2d = batch_in[i,0].cpu().detach().numpy()
+            gt_2d = batch_gt[i,0].cpu().detach().numpy()
+            out_2d = out[i+current_batch_size,0].cpu().detach().numpy()
 
-    inp_2d = batch[i%maximum_batch_size,0].cpu().detach().numpy()
-    gt_2d = batch_gt[i%maximum_batch_size,0].cpu().detach().numpy()
-    out_2d = out[i%maximum_batch_size+actual_batch_size,0].cpu().detach().numpy()
-    canvas_gt[y_loc:y_loc+y_len,x_loc:x_loc+x_len] = gt_2d.T
-    canvas_inp[y_loc:y_loc+y_len,x_loc:x_loc+x_len] = inp_2d.T
-    canvas_out[y_loc:y_loc+y_len,x_loc:x_loc+x_len] += (mask*out_2d).T
-    canvas_wt[y_loc:y_loc+y_len,x_loc:x_loc+x_len] += (mask*np.ones_like(out_2d)).T
+            mask = np.ones((64,256))
+            if double_marigin:
+                if x_loc[i] > 0:
+                    mask[:x_move,:] = 0
+                    mask[x_move:2*x_move,:] = np.minimum(np.linspace(0,1,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[x_move:2*x_move,:])
+                if x_loc[i] + x_len < canvas_gt.shape[1]:
+                    mask[-x_move:,:] = 0
+                    mask[-2*x_move:-x_move,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[-2*x_move:-x_move,:])
+                if y_loc[i] > 0:
+                    mask[:,:y_move] = 0
+                    mask[:,y_move:2*y_move] = np.minimum(np.linspace(0,1,y_move+2)[1:-1], mask[:,y_move:2*y_move])
+                if y_loc[i] + y_len < canvas_gt.shape[0]:
+                    mask[:,-y_move:] = 0
+                    mask[:,-2*y_move:-y_move] = np.minimum(np.linspace(1,0,y_move+2)[1:-1], mask[:,-2*y_move:-y_move])
+            else:
+                if x_loc[i] > 0:
+                    mask[:x_move,:] = np.minimum(np.linspace(0,1,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[:x_move,:])
+                if x_loc[i] + x_len < canvas_gt.shape[1]:
+                    mask[-x_move:,:] = np.minimum(np.linspace(1,0,x_move+2)[1:-1][:,np.newaxis].repeat(y_len, axis=1), mask[-x_move:,:])
+                if y_loc[i] > 0:
+                    mask[:,:y_move] = np.minimum(np.linspace(0,1,y_move+2)[1:-1], mask[:,:y_move])
+                if y_loc[i] + y_len < canvas_gt.shape[0]:
+                    mask[:,-y_move:] = np.minimum(np.linspace(1,0,y_move+2)[1:-1], mask[:,-y_move:])
 
-    # if i == 370-1: break
-    # if i == actual_batch_size-1: break
-canvas_inp /= canvas_wt
+
+            canvas_gt[ y_loc[i]:y_loc[i]+y_len,x_loc[i]:x_loc[i]+x_len] = gt_2d.T
+            canvas_inp[y_loc[i]:y_loc[i]+y_len,x_loc[i]:x_loc[i]+x_len] = inp_2d.T
+            # canvas_out[y_loc[i]:y_loc[i]+y_len,x_loc[i]:x_loc[i]+x_len]= out_2d.T
+            canvas_out[y_loc[i]:y_loc[i]+y_len,x_loc[i]:x_loc[i]+x_len] += (mask*out_2d).T
+            canvas_wt[ y_loc[i]:y_loc[i]+y_len,x_loc[i]:x_loc[i]+x_len] += (mask*np.ones_like(gt_2d)).T
+
+
+    # clean batch if full
+    if (current_batch_size == maximum_batch_size): current_batch_size = 0
+
+    # break when finished
+    if (ds_window_num >= ds_end_num): break
+    else: ds_window_num += 1
+
+# canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
 np.save(f'{work_folder}/canvas-gt-{n}.npy', canvas_gt)
 np.save(f'{work_folder}/canvas-inp-{n}.npy', canvas_inp) 
-# np.save(f'{work_folder}/canvas-rv5.0_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas-{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))
