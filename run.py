@@ -2,7 +2,7 @@ from diffusion import GaussianDiffusion, Trainer
 from unet import UNet
 
 mode = "demultiple" #demultiple, interpolation, denoising
-folder = "dataset/"+mode+"/data_train_npy/"
+folder = "dataset/"+mode+"/data_train_refine_npy/"
 image_size = (64,256)
 
 model = UNet(
@@ -36,7 +36,7 @@ trainer = Trainer(
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
     save_and_sample_every=50000,
-    result_suffix = "0116-waveform"
+    result_suffix = "0317-waveform"
 )
 
 if __name__ == '__main__':
