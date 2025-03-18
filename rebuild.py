@@ -15,16 +15,16 @@ from diffusion import GaussianDiffusion, Trainer, Dataset
 run_path = sys.argv[1]
 n = int(sys.argv[2])
 model_name = sys.argv[3] if len(sys.argv) > 3 else "model-final.pt"
-playback_speed = sys.argv[4] if len(sys.argv) > 4 else 1
+playback_speed = int(sys.argv[4]) if len(sys.argv) > 4 else 1
 
 run = importfile(run_path)
 work_folder = run.trainer.results_folder
+maximum_batch_size = run.trainer.batch_size
 # obs_num = 28
 # xshift = (obs_num-1)*-2
 # to_flip = True
-testset_folder = 'dataset/'+run.mode+'/data_test_allstn_npy/'
+testset_folder = 'dataset/'+run.mode+'/data_test_npy/'
 tile_info = importfile(str(testset_folder+'tile_info.py'))
-maximum_batch_size = 16
     
 parameters = torch.load(str(work_folder/model_name), map_location=torch.device('mps'), weights_only=True)['model']
 
@@ -69,7 +69,7 @@ canvas_gt= np.ndarray(shape=(y_move*(tile_info.y_tile-1)+y_len, x_move*(tile_inf
 canvas_inp = np.ndarray(shape=canvas_gt.shape)
 canvas_out = np.ndarray(shape=canvas_gt.shape)
 canvas_wt = np.ndarray(shape=canvas_gt.shape)
-double_marigin = playback_speed<3
+double_marigin = (playback_speed < 3)
 
 ds_len = len(ds)
 # jump to target window num
@@ -87,10 +87,13 @@ while True:
     y_loc[current_batch_size] = int(((ds_window_num//tile_info.x_tile)%tile_info.y_tile)*y_move)
 
     # load data skipping overlapping windows if set on
-    if ((x_loc[current_batch_size]%(x_move*playback_speed)==0) and \
-        ((y_loc[current_batch_size]%(y_move*playback_speed)==0) or (y_loc[current_batch_size]==0) or (y_loc[current_batch_size]+y_len==canvas_gt.shape[0]))) \
-        or ((y_loc[current_batch_size]%(y_move*playback_speed)==0) and \
-        ((x_loc[current_batch_size]==0) or (x_loc[current_batch_size]+x_len==canvas_gt.shape[1]))):
+    if (((x_loc[current_batch_size]%(x_move*playback_speed)==0) and
+         ((y_loc[current_batch_size]%(y_move*playback_speed)==0) or 
+          (y_loc[current_batch_size]==0) or 
+          (y_loc[current_batch_size]+y_len==canvas_gt.shape[0]))) or
+        ((y_loc[current_batch_size]%(y_move*playback_speed)==0) and
+         ((x_loc[current_batch_size]==0) or 
+          (x_loc[current_batch_size]+x_len==canvas_gt.shape[1])))):
 
         x_in, x_gt = ds[ds_window_num]
         x_in = torch.unsqueeze(x_in, dim=0)
@@ -150,9 +153,9 @@ while True:
 
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
-np.save(f'{work_folder}/canvas-gt-{n}.npy', canvas_gt)
-np.save(f'{work_folder}/canvas-inp-{n}.npy', canvas_inp) 
-np.save(f'{work_folder}/canvas-{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas-fast_gt-{n}.npy', canvas_gt)
+np.save(f'{work_folder}/canvas-fast_inp-{n}.npy', canvas_inp) 
+np.save(f'{work_folder}/canvas-fast_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))
