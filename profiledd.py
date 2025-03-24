@@ -304,7 +304,7 @@ class Profiles(np.ndarray):
             initial_count += count
         return initial_count
 
-    def fragmentize(self, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
+    def fragmentize(self, vclip=50, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
         """return iterable dataset of 2-d array fragments for pytorch dataloader"""
         if (tmin is None) and (tmax is None) and (t_interval is None):
             time_crop = None
@@ -312,7 +312,8 @@ class Profiles(np.ndarray):
             if tmin is None: tmin = 0
             if tmax is None: tmax = tmin + t_interval
             time_crop = (tmin, tmax)
-        return self.Fragment(self, unit_size=unit_size, time_crop=time_crop, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
+        if vclip is None: vclip = 1
+        return self.Fragment(self/vclip, unit_size=unit_size, time_crop=time_crop, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
     
     class Fragment(data.Dataset):
         def __init__(self, profiles, unit_size: tuple, time_crop, x_move: int, y_move: int):
@@ -320,6 +321,7 @@ class Profiles(np.ndarray):
             self.unit_size = unit_size
             self.x_move = x_move
             self.y_move = y_move
+            self.time_crop = time_crop
             if time_crop is None: sample_min, sample_max = (0, profiles.shape[1])
             else: sample_min, sample_max = (int(time_crop[0]*profiles.sampling_rate), int(time_crop[1]*profiles.sampling_rate))
             self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
@@ -432,6 +434,7 @@ class Profiles(np.ndarray):
             count = 0
             results = type(self)(profiles=self.profiles,
                                     unit_size=self.unit_size,
+                                    time_crop=self.time_crop,
                                     x_move=self.x_move,
                                     y_move=self.y_move)
             for input_data in dl:
