@@ -213,7 +213,9 @@ class Profiles(np.ndarray):
                   offsets=npzfile['offsets'],
                   first_arrival_reference=npzfile['first_arrival_reference'])
     
-    def get_xyz(self, raw, offset, sample_num):
+    def get_xyz(self, raw, offset, sample_num=None):
+        if sample_num == None:
+            sample_num = self.shape[1]
         x = np.array([offset]*(sample_num))
         y = np.array([np.arange(sample_num)]*len(offset)).T/self.sampling_rate
         if self.reduction_vel:
@@ -242,15 +244,16 @@ class Profiles(np.ndarray):
             if tmax: 
                 time_range = tmax + (max(abs(self.offsets[i]))/self.reduction_vel if self.reduction_vel else 0)
                 sample_num = int(time_range*self.sampling_rate)
+                x,y,z = self.get_xyz(self[i], self.offsets[i], sample_num)
                 ax.set_ylim(0,tmax)
-            else: sample_num = self.shape[1]
+            else:
+                x,y,z = self.get_xyz(self[i], self.offsets[i])
 
-            x,y,z = self.get_xyz(self[i], self.offsets[i], sample_num)
-            print(x.shape,y.shape,z.shape)
+            # print(x.shape,y.shape,z.shape){}
 
             if not label_offset:
                 x = np.array([np.arange(len(self.offsets[i]))]*sample_num)
-            im = ax.pcolorfast(x, y, z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
+            im = ax.pcolorfast(x[:z.shape[0],:z.shape[1]], y[:z.shape[0],:z.shape[1]], z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
 
             if plot_reference_arrival:
                 if self.first_arrival_reference[i] is not None:
@@ -301,27 +304,47 @@ class Profiles(np.ndarray):
             initial_count += count
         return initial_count
 
-    def fragmentize(self, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
+    def fragmentize(self, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
         """return iterable dataset of 2-d array fragments for pytorch dataloader"""
-        return self.Fragment(self, unit_size=unit_size, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
+        if (tmin is None) and (tmax is None) and (t_interval is None):
+            time_crop = None
+        else:
+            if tmin is None: tmin = 0
+            if tmax is None: tmax = tmin + t_interval
+            time_crop = (tmin, tmax)
+        return self.Fragment(self, unit_size=unit_size, time_crop=time_crop, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
     
     class Fragment(data.Dataset):
-        def __init__(self, profiles, unit_size: tuple, x_move: int, y_move: int):
+        def __init__(self, profiles, unit_size: tuple, time_crop, x_move: int, y_move: int):
             self.profiles = profiles
             self.unit_size = unit_size
             self.x_move = x_move
             self.y_move = y_move
+            if time_crop is None: sample_min, sample_max = (0, profiles.shape[1])
+            else: sample_min, sample_max = (int(time_crop[0]*profiles.sampling_rate), int(time_crop[1]*profiles.sampling_rate))
             self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
-            self.y_tile = 1 + (profiles.shape[1]-unit_size[1])//y_move
+            self.y_tile = 1 + ((sample_max-sample_min)-unit_size[1])//y_move
             self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[1], unit_size[0]))
+            print(self.fragments.shape)
 
             for i in range(self.fragments.shape[0]):
                 num_profile = i // (self.x_tile * self.y_tile)
                 num_x_tile = (i % (self.x_tile * self.y_tile)) % self.x_tile
                 num_y_tile = (i % (self.x_tile * self.y_tile)) // self.x_tile
                 loc_x_start = num_x_tile * x_move
-                loc_y_start = num_y_tile * y_move
-                self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+self.unit_size[1], loc_x_start:loc_x_start+self.unit_size[0]]
+                loc_y_start = num_y_tile * y_move + sample_min
+                if self.profiles.reduction_vel is not None:
+                    reduced_times_in_sample = np.abs(self.profiles.offsets[num_profile][loc_x_start:loc_x_start+unit_size[0]]
+                                                                /self.profiles.reduction_vel)*self.profiles.sampling_rate
+                    # print(reduced_times_in_sample)
+                    for j in range(unit_size[0]):
+                        loc_reduced_y_start = int(loc_y_start + reduced_times_in_sample[j])
+                        buffer_start = min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start)
+                        self.fragments[i,:buffer_start,j] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
+                        if buffer_start < unit_size[1]:
+                            self.fragments[i,buffer_start:,j] = np.zeros((unit_size[1]-buffer_start))
+                else:
+                    self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+unit_size[1], loc_x_start:loc_x_start+unit_size[0]]
         
         def __len__(self):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
@@ -353,7 +376,7 @@ class Profiles(np.ndarray):
                                                     first_arrival_reference=self.profiles.first_arrival_reference,
                                                     sampling_rate=self.profiles.sampling_rate,
                                                     filter_history=self.profiles.filter_history,
-                                                    reduction_vel=self.profiles.reduction_vel,
+                                                    reduction_vel=0.,
                                                     offsets=self.profiles.offsets)
             
             for i in range(self.profiles.shape[0]):
