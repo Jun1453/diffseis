@@ -5,8 +5,10 @@ import numpy as np
 import segyio
 from PIL import Image
 from tqdm import tqdm
+from copy import deepcopy
 from pathlib import Path
-from torchvision import transforms
+from torch.optim import Adam
+from torch.amp import GradScaler, autocast
 from scipy.signal import butter, filtfilt, decimate, resample
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
@@ -48,15 +50,59 @@ def jamstec_handler(f):
         padded_offsets.append(padded_offset)
     return padded_raws, padded_offsets
 
+class ModelEmaV2(nn.Module):
+    def __init__(self, model, decay=0.9999, device=None):
+        super(ModelEmaV2, self).__init__()
+        self.module = deepcopy(model)
+        self.module.eval()
+        self.decay = decay
+        self.device = device
+        if self.device is not None:
+            self.module.to(device=device)
+        self.backup = {}
+
+    def _update(self, model, update_fn):
+        with torch.no_grad():
+            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                if self.device is not None:
+                    model_v = model_v.to(device=self.device)
+                ema_v.copy_(update_fn(ema_v, model_v))
+
+    def update(self, model):
+        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+
+    def set(self, model):
+        self._update(model, update_fn=lambda e, m: m)
+
+    def apply_shadow(self):
+        """Save current model parameters and replace them with EMA parameters."""
+        self.backup = {name: param.data.clone() for name, param in self.module.state_dict().items()}
+        for name, param in self.module.named_parameters():
+            if param.requires_grad:
+                param.data.copy_(self.module.state_dict()[name])
+
+    def restore(self):
+        """Restore the original model parameters."""
+        for name, param in self.module.named_parameters():
+            if param.requires_grad:
+                param.data.copy_(self.backup[name])
+        self.backup = {}
+
 class Profiles(np.ndarray):
     def __new__(cls, input_array, sampling_rate=None, filter_history=None, reduction_vel=None, offsets=None, first_arrival_reference=None):
-        obj = np.asarray(input_array).view(cls)
+        obj = np.asarray(input_array, dtype=np.float32).view(cls)
         obj.sampling_rate = sampling_rate  # Sampling rate in Hz
         obj.filter_history = filter_history  # Tuple of (low_freq, high_freq) in Hz
         obj.reduction_vel = reduction_vel  # Reduction velocity in km/s
         obj.offsets = offsets  # Offsets in km
         obj.first_arrival_reference = first_arrival_reference  # Offsets in km
         return obj
+    
+    def __add__(self, other):
+        if (type(other) == tuple) or (type(other) == list):
+            return type(self).concatenate([self] + list(other))
+        else:
+            return type(self).concatenate([self, other])
 
     def __array_finalize__(self, obj):
         if obj is None: return
@@ -126,10 +172,10 @@ class Profiles(np.ndarray):
         concat_arrivals = []
         for p in profiles:
             concat_offsets += p.offsets
-            concat_arrivals += p.first_arrival_reference
+            if profiles[0].first_arrival_reference: concat_arrivals += p.first_arrival_reference
         
         return cls(concat_data,
-                  first_arrival_reference=concat_arrivals,
+                  first_arrival_reference=concat_arrivals if concat_arrivals else None,
                   sampling_rate=base_rate,
                   filter_history=profiles[0].filter_history,
                   reduction_vel=profiles[0].reduction_vel,
@@ -352,10 +398,17 @@ class Profiles(np.ndarray):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
         
         def __getitem__(self, key):
-            return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0)
+            if hasattr(self, 'ground_truth'):
+                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
+            else:
+                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0)
         
         def __setitem__(self, key, value):
             self.fragments[key] = value
+
+        def set_ground_truth(self, ground_truth):
+            if len(self) != len(ground_truth): raise ValueError("size of the given ground_truth does not match")
+            self.ground_truth = ground_truth
         
         def rebuild(self, x_move_factor=None, y_move_factor=None, x_move=None, y_move=None):
             if x_move_factor is not None:
@@ -446,3 +499,48 @@ class Profiles(np.ndarray):
 
 
             return results
+        
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', device='cuda'):
+            if save_every is None: save_every = num_epochs
+            scaler = GradScaler(enabled = enable_amp)
+            optimizer = Adam(ddpm.parameters(), lr=learning_rate)
+            ema = ModelEmaV2(ddpm, ema_decay, device)
+
+            for n in range(num_epochs):
+                dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+                total_loss = 0
+                count = 0
+                for d, gt in dl:
+                    count += 1
+                    with autocast(device):  # Updated usage
+                        loss = ddpm(d.to(device), gt.to(device)).to(device)
+                        #scaler.scale(loss / self.gradient_accumulate_every).backward()
+                        scaler.scale(loss/gradient_accumulate_every).backward()
+
+                    if count % gradient_accumulate_every == 0:
+                        total_loss+=loss.item()
+                        print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                        ema.update(ddpm)
+                    
+
+                print(f'{n}: {total_loss}')
+
+                ema.apply_shadow()
+                ddpm.eval()
+                # evaluate_model()
+                ema.restore()
+
+                if (n+1 % save_every) or (n+1 == num_epochs):
+                    milestone = n+1 // save_every if n+1 < num_epochs else 'final'
+                    info = {
+                        'epoch': n,
+                        'model':ddpm.state_dict(),
+                        # 'ema': ema.state_dict(),
+                        'scaler': scaler.state_dict()
+                    }
+                    # torch.save(info, str(results_folder / f'model-{milestone}.pt'))
+
+            print('training completed')
