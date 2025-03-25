@@ -501,6 +501,7 @@ class Profiles(np.ndarray):
             return results
         
         def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', device='cuda'):
+            if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
             scaler = GradScaler(enabled = enable_amp)
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
@@ -519,7 +520,7 @@ class Profiles(np.ndarray):
 
                     if count % gradient_accumulate_every == 0:
                         total_loss+=loss.item()
-                        print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                        print(f'{loss/gradient_accumulate_every}->{total_loss/count} [{count}/{len(dl)}]')
                         scaler.step(optimizer)
                         scaler.update()
                         optimizer.zero_grad()
@@ -541,6 +542,6 @@ class Profiles(np.ndarray):
                         # 'ema': ema.state_dict(),
                         'scaler': scaler.state_dict()
                     }
-                    # torch.save(info, str(results_folder / f'model-{milestone}.pt'))
+                    torch.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
 
             print('training completed')
