@@ -520,7 +520,7 @@ class Profiles(np.ndarray):
 
                     if count % gradient_accumulate_every == 0:
                         total_loss+=loss.item()
-                        print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                        print(f'{loss/gradient_accumulate_every}->{total_loss/count} [{count}/{len(dl)}]')
                         scaler.step(optimizer)
                         scaler.update()
                         optimizer.zero_grad()
@@ -542,6 +542,6 @@ class Profiles(np.ndarray):
                         # 'ema': ema.state_dict(),
                         'scaler': scaler.state_dict()
                     }
-                    # torch.save(info, str(results_folder / f'model-{milestone}.pt'))
+                    torch.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
 
             print('training completed')
