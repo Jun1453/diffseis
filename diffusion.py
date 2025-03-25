@@ -10,8 +10,7 @@ from tqdm import tqdm
 import random
 
 from torch.utils import data
-from torch.cuda.amp import autocast, GradScaler
-from torch.amp import autocast  # Updated import
+from torch.amp import GradScaler, autocast
 import os
 
 from pathlib import Path

@@ -501,6 +501,7 @@ class Profiles(np.ndarray):
             return results
         
         def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', device='cuda'):
+            if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
             scaler = GradScaler(enabled = enable_amp)
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
