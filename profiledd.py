@@ -527,7 +527,7 @@ class Profiles(np.ndarray):
                         ema.update(ddpm)
                     
 
-                print(f'{n}: {total_loss}')
+                print(f'{n}: {total_loss/count}')
 
                 ema.apply_shadow()
                 ddpm.eval()
@@ -539,7 +539,7 @@ class Profiles(np.ndarray):
                     info = {
                         'epoch': n,
                         'model':ddpm.state_dict(),
-                        # 'ema': ema.state_dict(),
+                        'ema': ema.state_dict(),
                         'scaler': scaler.state_dict()
                     }
                     torch.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
