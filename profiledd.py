@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.backends.cudnn as cudnn
 import torch.utils.data as data
 import numpy as np
 import segyio
@@ -10,6 +11,8 @@ from pathlib import Path
 from accelerate import Accelerator
 from torch.optim import Adam
 from scipy.signal import butter, filtfilt, decimate, resample
+
+cudnn.benchmark = True
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
     b, a = butter(poles, cutoff, 'highpass', fs=sample_rate)
@@ -526,8 +529,7 @@ class Profiles(np.ndarray):
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
             dl = accelerator.prepare(dl)
 
-            for n in range(start_epoch, num_epochs):
-
+            for n in tqdm(range(start_epoch, num_epochs), desc="Training Epochs"):
                 total_loss = 0
                 count = 0
                 for d, gt in dl:
@@ -543,7 +545,7 @@ class Profiles(np.ndarray):
                     if count % gradient_accumulate_every == 0:
                         total_loss += loss.item() * gradient_accumulate_every
                         if accelerator.is_main_process:
-                            print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                            tqdm.write(f'Loss: {loss.item()} -> Average Loss: {total_loss/count} [{count}/{len(dl)}]')
                         
                         optimizer.step()
                         optimizer.zero_grad()
@@ -557,8 +559,8 @@ class Profiles(np.ndarray):
                     # evaluate_model()
                     ema.restore()
 
-                    if (n+1 % save_every == 0) or (n+1 == num_epochs):
-                        milestone = n+1 // save_every if n+1 < num_epochs else 'final'
+                    if ((n+1) % save_every == 0) or ((n+1) == num_epochs):
+                        milestone = (n+1) // save_every if (n+1) < num_epochs else 'final'
                         info = {
                             'epoch': n,
                             'model': accelerator.unwrap_model(ddpm).state_dict(),
