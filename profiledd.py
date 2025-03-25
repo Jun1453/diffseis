@@ -7,8 +7,8 @@ from PIL import Image
 from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
+from accelerate import Accelerator
 from torch.optim import Adam
-from torch.amp import GradScaler, autocast
 from scipy.signal import butter, filtfilt, decimate, resample
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
@@ -500,48 +500,72 @@ class Profiles(np.ndarray):
 
             return results
         
-        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', device='cuda'):
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
-            scaler = GradScaler(enabled = enable_amp)
+
+            # Initialize accelerator
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            device = accelerator.device
+
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
             ema = ModelEmaV2(ddpm, ema_decay, device)
 
-            for n in range(num_epochs):
-                dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            # Initialize model with loaded data
+            if load_from is not None:
+                load_model = torch.load(str(load_from))
+                start_epoch = load_model['epoch'] + 1
+                ddpm.load_state_dict(load_model['model'])
+                ema.load_state_dict(load_model['ema'])
+                optimizer.load_state_dict(load_model['optimizer'])
+            else:
+                start_epoch = 0
+
+            # Prepare for distributed training
+            ddpm, optimizer = accelerator.prepare(ddpm, optimizer)
+            dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            dl = accelerator.prepare(dl)
+
+            for n in range(start_epoch, num_epochs):
+
                 total_loss = 0
                 count = 0
                 for d, gt in dl:
                     count += 1
-                    with autocast(device):  # Updated usage
-                        loss = ddpm(d.to(device), gt.to(device)).to(device)
-                        #scaler.scale(loss / self.gradient_accumulate_every).backward()
-                        scaler.scale(loss/gradient_accumulate_every).backward()
+                    
+                    # Forward pass
+                    loss = ddpm(d, gt)
+                    loss = loss / gradient_accumulate_every
+                    
+                    # Backward pass
+                    accelerator.backward(loss)
 
                     if count % gradient_accumulate_every == 0:
-                        total_loss+=loss.item()
-                        print(f'{loss/gradient_accumulate_every}->{total_loss/count} [{count}/{len(dl)}]')
-                        scaler.step(optimizer)
-                        scaler.update()
+                        total_loss += loss.item() * gradient_accumulate_every
+                        if accelerator.is_main_process:
+                            print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                        
+                        optimizer.step()
                         optimizer.zero_grad()
                         ema.update(ddpm)
-                    
 
-                print(f'{n}: {total_loss/count}')
+                if accelerator.is_main_process:
+                    print(f'Epoch {n}: {total_loss/count}')
 
-                ema.apply_shadow()
-                ddpm.eval()
-                # evaluate_model()
-                ema.restore()
+                    ema.apply_shadow()
+                    ddpm.eval()
+                    # evaluate_model()
+                    ema.restore()
 
-                if (n+1 % save_every) or (n+1 == num_epochs):
-                    milestone = n+1 // save_every if n+1 < num_epochs else 'final'
-                    info = {
-                        'epoch': n,
-                        'model':ddpm.state_dict(),
-                        'ema': ema.state_dict(),
-                        'scaler': scaler.state_dict()
-                    }
-                    torch.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
+                    if (n+1 % save_every == 0) or (n+1 == num_epochs):
+                        milestone = n+1 // save_every if n+1 < num_epochs else 'final'
+                        info = {
+                            'epoch': n,
+                            'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            'ema': ema.state_dict(),
+                            'optimizer': optimizer.state_dict()
+                        }
+                        accelerator.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
 
-            print('training completed')
+            if accelerator.is_main_process:
+                print('training completed')
