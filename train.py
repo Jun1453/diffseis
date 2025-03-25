@@ -63,4 +63,5 @@ diffusion = GaussianDiffusion(
     noise_mix_ratio = None
 ).to("mps")#.cuda()
 
-ds_data.train(diffusion, 10, 16, learning_rate=3e-6, device='mps')
+if __name__ == '__main__':
+    ds_data.train(diffusion, 10, 16, learning_rate=3e-6, device='mps')
