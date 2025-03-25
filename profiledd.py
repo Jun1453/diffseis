@@ -5,8 +5,10 @@ import numpy as np
 import segyio
 from PIL import Image
 from tqdm import tqdm
+from copy import deepcopy
 from pathlib import Path
-from torchvision import transforms
+from torch.optim import Adam
+from torch.amp import GradScaler, autocast
 from scipy.signal import butter, filtfilt, decimate, resample
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
@@ -48,15 +50,59 @@ def jamstec_handler(f):
         padded_offsets.append(padded_offset)
     return padded_raws, padded_offsets
 
+class ModelEmaV2(nn.Module):
+    def __init__(self, model, decay=0.9999, device=None):
+        super(ModelEmaV2, self).__init__()
+        self.module = deepcopy(model)
+        self.module.eval()
+        self.decay = decay
+        self.device = device
+        if self.device is not None:
+            self.module.to(device=device)
+        self.backup = {}
+
+    def _update(self, model, update_fn):
+        with torch.no_grad():
+            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                if self.device is not None:
+                    model_v = model_v.to(device=self.device)
+                ema_v.copy_(update_fn(ema_v, model_v))
+
+    def update(self, model):
+        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+
+    def set(self, model):
+        self._update(model, update_fn=lambda e, m: m)
+
+    def apply_shadow(self):
+        """Save current model parameters and replace them with EMA parameters."""
+        self.backup = {name: param.data.clone() for name, param in self.module.state_dict().items()}
+        for name, param in self.module.named_parameters():
+            if param.requires_grad:
+                param.data.copy_(self.module.state_dict()[name])
+
+    def restore(self):
+        """Restore the original model parameters."""
+        for name, param in self.module.named_parameters():
+            if param.requires_grad:
+                param.data.copy_(self.backup[name])
+        self.backup = {}
+
 class Profiles(np.ndarray):
     def __new__(cls, input_array, sampling_rate=None, filter_history=None, reduction_vel=None, offsets=None, first_arrival_reference=None):
-        obj = np.asarray(input_array).view(cls)
+        obj = np.asarray(input_array, dtype=np.float32).view(cls)
         obj.sampling_rate = sampling_rate  # Sampling rate in Hz
         obj.filter_history = filter_history  # Tuple of (low_freq, high_freq) in Hz
         obj.reduction_vel = reduction_vel  # Reduction velocity in km/s
         obj.offsets = offsets  # Offsets in km
         obj.first_arrival_reference = first_arrival_reference  # Offsets in km
         return obj
+    
+    def __add__(self, other):
+        if (type(other) == tuple) or (type(other) == list):
+            return type(self).concatenate([self] + list(other))
+        else:
+            return type(self).concatenate([self, other])
 
     def __array_finalize__(self, obj):
         if obj is None: return
@@ -126,10 +172,10 @@ class Profiles(np.ndarray):
         concat_arrivals = []
         for p in profiles:
             concat_offsets += p.offsets
-            concat_arrivals += p.first_arrival_reference
+            if profiles[0].first_arrival_reference: concat_arrivals += p.first_arrival_reference
         
         return cls(concat_data,
-                  first_arrival_reference=concat_arrivals,
+                  first_arrival_reference=concat_arrivals if concat_arrivals else None,
                   sampling_rate=base_rate,
                   filter_history=profiles[0].filter_history,
                   reduction_vel=profiles[0].reduction_vel,
@@ -209,9 +255,13 @@ class Profiles(np.ndarray):
         return cls(npzfile['data'],
                   sampling_rate=npzfile['sampling_rate'].item(),
                   filter_history=list(npzfile['filter_history']),
-                  reduction_vel=npzfile['reduction_vel'].item())
+                  reduction_vel=npzfile['reduction_vel'].item(),
+                  offsets=npzfile['offsets'],
+                  first_arrival_reference=npzfile['first_arrival_reference'])
     
-    def get_xyz(self, raw, offset, sample_num):
+    def get_xyz(self, raw, offset, sample_num=None):
+        if sample_num == None:
+            sample_num = self.shape[1]
         x = np.array([offset]*(sample_num))
         y = np.array([np.arange(sample_num)]*len(offset)).T/self.sampling_rate
         if self.reduction_vel:
@@ -240,15 +290,16 @@ class Profiles(np.ndarray):
             if tmax: 
                 time_range = tmax + (max(abs(self.offsets[i]))/self.reduction_vel if self.reduction_vel else 0)
                 sample_num = int(time_range*self.sampling_rate)
+                x,y,z = self.get_xyz(self[i], self.offsets[i], sample_num)
                 ax.set_ylim(0,tmax)
-            else: sample_num = self.shape[1]
+            else:
+                x,y,z = self.get_xyz(self[i], self.offsets[i])
 
-            x,y,z = self.get_xyz(self[i], self.offsets[i], sample_num)
-            print(x.shape,y.shape,z.shape)
+            # print(x.shape,y.shape,z.shape){}
 
             if not label_offset:
                 x = np.array([np.arange(len(self.offsets[i]))]*sample_num)
-            im = ax.pcolorfast(x, y, z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
+            im = ax.pcolorfast(x[:z.shape[0],:z.shape[1]], y[:z.shape[0],:z.shape[1]], z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
 
             if plot_reference_arrival:
                 if self.first_arrival_reference[i] is not None:
@@ -298,3 +349,198 @@ class Profiles(np.ndarray):
             print(f"Image saved: ({count}/{initial_count+count}) units with {len(offset_loop)} on offset axis and {len(time_loop)} on time axis")
             initial_count += count
         return initial_count
+
+    def fragmentize(self, vclip=50, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
+        """return iterable dataset of 2-d array fragments for pytorch dataloader"""
+        if (tmin is None) and (tmax is None) and (t_interval is None):
+            time_crop = None
+        else:
+            if tmin is None: tmin = 0
+            if tmax is None: tmax = tmin + t_interval
+            time_crop = (tmin, tmax)
+        if vclip is None: vclip = 1
+        return self.Fragment(self/vclip, unit_size=unit_size, time_crop=time_crop, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
+    
+    class Fragment(data.Dataset):
+        def __init__(self, profiles, unit_size: tuple, time_crop, x_move: int, y_move: int):
+            self.profiles = profiles
+            self.unit_size = unit_size
+            self.x_move = x_move
+            self.y_move = y_move
+            self.time_crop = time_crop
+            if time_crop is None: sample_min, sample_max = (0, profiles.shape[1])
+            else: sample_min, sample_max = (int(time_crop[0]*profiles.sampling_rate), int(time_crop[1]*profiles.sampling_rate))
+            self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
+            self.y_tile = 1 + ((sample_max-sample_min)-unit_size[1])//y_move
+            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[1], unit_size[0]))
+            print(self.fragments.shape)
+
+            for i in range(self.fragments.shape[0]):
+                num_profile = i // (self.x_tile * self.y_tile)
+                num_x_tile = (i % (self.x_tile * self.y_tile)) % self.x_tile
+                num_y_tile = (i % (self.x_tile * self.y_tile)) // self.x_tile
+                loc_x_start = num_x_tile * x_move
+                loc_y_start = num_y_tile * y_move + sample_min
+                if self.profiles.reduction_vel is not None:
+                    reduced_times_in_sample = np.abs(self.profiles.offsets[num_profile][loc_x_start:loc_x_start+unit_size[0]]
+                                                                /self.profiles.reduction_vel)*self.profiles.sampling_rate
+                    # print(reduced_times_in_sample)
+                    for j in range(unit_size[0]):
+                        loc_reduced_y_start = int(loc_y_start + reduced_times_in_sample[j])
+                        buffer_start = min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start)
+                        self.fragments[i,:buffer_start,j] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
+                        if buffer_start < unit_size[1]:
+                            self.fragments[i,buffer_start:,j] = np.zeros((unit_size[1]-buffer_start))
+                else:
+                    self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+unit_size[1], loc_x_start:loc_x_start+unit_size[0]]
+        
+        def __len__(self):
+            return self.profiles.shape[0] * self.x_tile * self.y_tile
+        
+        def __getitem__(self, key):
+            if hasattr(self, 'ground_truth'):
+                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
+            else:
+                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0)
+        
+        def __setitem__(self, key, value):
+            self.fragments[key] = value
+
+        def set_ground_truth(self, ground_truth):
+            if len(self) != len(ground_truth): raise ValueError("size of the given ground_truth does not match")
+            self.ground_truth = ground_truth
+        
+        def rebuild(self, x_move_factor=None, y_move_factor=None, x_move=None, y_move=None):
+            if x_move_factor is not None:
+                rebuild_x_move = int(self.x_move * x_move_factor)
+            elif x_move is not None:
+                rebuild_x_move = x_move
+            else:
+                rebuild_x_move = self.x_move
+
+            if x_move_factor is not None:
+                rebuild_y_move = int(self.y_move * y_move_factor)
+            elif y_move is not None:
+                rebuild_y_move = y_move
+            else:
+                rebuild_y_move = self.y_move
+            
+            rebuilt_x_size = (self.unit_size[0]+self.x_move*(self.x_tile-1))
+            rebuilt_y_size = (self.unit_size[1]+self.y_move*(self.y_tile-1))
+            rebuilt_profiles = type(self.profiles)(np.zeros((self.profiles.shape[0], rebuilt_y_size, rebuilt_x_size)),
+                                                    first_arrival_reference=self.profiles.first_arrival_reference,
+                                                    sampling_rate=self.profiles.sampling_rate,
+                                                    filter_history=self.profiles.filter_history,
+                                                    reduction_vel=0.,
+                                                    offsets=self.profiles.offsets)
+            
+            for i in range(self.profiles.shape[0]):
+                weight = np.zeros((rebuilt_y_size, rebuilt_x_size))
+                for j in list(range(0, self.y_tile-1, rebuild_y_move//self.y_move))+[self.y_tile-1]:
+                    loc_y_start = j * self.y_move
+                    loc_y_end = loc_y_start+self.unit_size[1]
+                    for k in list(range(0, self.x_tile-1, rebuild_x_move//self.x_move))+[self.x_tile-1]:
+                        loc_x_start = k * self.x_move
+                        loc_x_end = loc_x_start+self.unit_size[0]
+
+                        index = k + j*self.x_tile + i*self.x_tile*self.y_tile
+                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += self[index].numpy()[0]
+                        weight[loc_y_start:loc_y_end, loc_x_start:loc_x_end] += np.ones((self.unit_size[1], self.unit_size[0]))
+                    
+            
+            return rebuilt_profiles/weight
+
+        def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda'):
+            parameters = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)['model']
+
+            del parameters['betas']
+            del parameters['alphas_cumprod']
+            del parameters['alphas_cumprod_prev']
+            del parameters['sqrt_alphas_cumprod']
+            del parameters['sqrt_one_minus_alphas_cumprod']
+            del parameters['log_one_minus_alphas_cumprod']
+            del parameters['sqrt_recip_alphas_cumprod']
+            del parameters['sqrt_recipm1_alphas_cumprod']
+            del parameters['posterior_variance']
+            del parameters['posterior_log_variance_clipped']
+            del parameters['posterior_mean_coef1']
+            del parameters['posterior_mean_coef2']
+
+
+            def change_key(self, old, new):
+                #copy = self.copy()
+                for _ in range(len(self)):
+                    k, v = self.popitem(False)
+                    self[new if old == k else k] = v
+                    
+            keys = []
+            for key, value in parameters.items():
+                keys.append(key)
+                
+            for i in range(len(keys)):
+                change_key(parameters, keys[i], keys[i][11:])
+                
+            ddpm.denoise_fn.load_state_dict(parameters)
+            dl = data.DataLoader(self, batch_size=batch_size, pin_memory=True)
+
+
+            count = 0
+            results = type(self)(profiles=self.profiles,
+                                    unit_size=self.unit_size,
+                                    time_crop=self.time_crop,
+                                    x_move=self.x_move,
+                                    y_move=self.y_move)
+            for input_data in dl:
+                output_data = ddpm.inference(x_in=input_data.to(device), clip_denoised=False)
+                for i in range(len(input_data),2*len(input_data)):
+                    results[count] = output_data[i,0].cpu().detach()
+                    count += 1
+            # [ddpm.inference(x_in=input_data.to(device), clip_denoised=False)[i,0].cpu().detach().numpy() for input_data in dl for i in range(len(input_data),2*len(input_data))]
+
+
+            return results
+        
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', device='cuda'):
+            if save_every is None: save_every = num_epochs
+            scaler = GradScaler(enabled = enable_amp)
+            optimizer = Adam(ddpm.parameters(), lr=learning_rate)
+            ema = ModelEmaV2(ddpm, ema_decay, device)
+
+            for n in range(num_epochs):
+                dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+                total_loss = 0
+                count = 0
+                for d, gt in dl:
+                    count += 1
+                    with autocast(device):  # Updated usage
+                        loss = ddpm(d.to(device), gt.to(device)).to(device)
+                        #scaler.scale(loss / self.gradient_accumulate_every).backward()
+                        scaler.scale(loss/gradient_accumulate_every).backward()
+
+                    if count % gradient_accumulate_every == 0:
+                        total_loss+=loss.item()
+                        print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                        ema.update(ddpm)
+                    
+
+                print(f'{n}: {total_loss}')
+
+                ema.apply_shadow()
+                ddpm.eval()
+                # evaluate_model()
+                ema.restore()
+
+                if (n+1 % save_every) or (n+1 == num_epochs):
+                    milestone = n+1 // save_every if n+1 < num_epochs else 'final'
+                    info = {
+                        'epoch': n,
+                        'model':ddpm.state_dict(),
+                        # 'ema': ema.state_dict(),
+                        'scaler': scaler.state_dict()
+                    }
+                    # torch.save(info, str(results_folder / f'model-{milestone}.pt'))
+
+            print('training completed')

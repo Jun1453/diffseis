@@ -11,6 +11,7 @@ import random
 
 from torch.utils import data
 from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast  # Updated import
 import os
 
 from pathlib import Path
