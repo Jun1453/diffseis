@@ -11,6 +11,7 @@ from accelerate import Accelerator
 from torch.optim import Adam
 from scipy.signal import butter, filtfilt, decimate, resample
 
+
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
     b, a = butter(poles, cutoff, 'highpass', fs=sample_rate)
     filtered_data = filtfilt(b, a, data, axis=0)
@@ -268,6 +269,12 @@ class Profiles(np.ndarray):
             for j in range(len(y)): y[j] -= abs(x[j])/self.reduction_vel
         z = raw[:sample_num,:]
         return x,y,z
+    
+    def geospread_corr(self, func=lambda x: max(1, 1*(abs(x)/20))):
+        for i in range(self.shape[0]):
+            for j in range(self.shape[2]):
+                self[i:,j] *= func(self.offsets[i][j])
+        return self
 
     def plot(self, figsize=None, cmap='seismic', vmin=-1, vmax=1, tmax=None, label_offset=True, plot_reference_arrival=False):
         """Generate subplots for each profile along dimension 0
@@ -372,7 +379,7 @@ class Profiles(np.ndarray):
             else: sample_min, sample_max = (int(time_crop[0]*profiles.sampling_rate), int(time_crop[1]*profiles.sampling_rate))
             self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
             self.y_tile = 1 + ((sample_max-sample_min)-unit_size[1])//y_move
-            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[1], unit_size[0]))
+            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[0], unit_size[1]))
             print(self.fragments.shape)
 
             for i in range(self.fragments.shape[0]):
@@ -388,11 +395,11 @@ class Profiles(np.ndarray):
                     for j in range(unit_size[0]):
                         loc_reduced_y_start = int(loc_y_start + reduced_times_in_sample[j])
                         buffer_start = min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start)
-                        self.fragments[i,:buffer_start,j] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
+                        self.fragments[i,j,:buffer_start] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
                         if buffer_start < unit_size[1]:
-                            self.fragments[i,buffer_start:,j] = np.zeros((unit_size[1]-buffer_start))
+                            self.fragments[i,j,buffer_start:] = np.zeros((unit_size[1]-buffer_start))
                 else:
-                    self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+unit_size[1], loc_x_start:loc_x_start+unit_size[0]]
+                    self.fragments[i] = self.profiles[num_profile, loc_x_start:loc_x_start+unit_size[0], loc_y_start:loc_y_start+unit_size[1]].T
         
         def __len__(self):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
@@ -526,8 +533,7 @@ class Profiles(np.ndarray):
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
             dl = accelerator.prepare(dl)
 
-            for n in range(start_epoch, num_epochs):
-
+            for n in tqdm(range(start_epoch, num_epochs), desc="Training Epochs"):
                 total_loss = 0
                 count = 0
                 for d, gt in dl:
@@ -543,7 +549,7 @@ class Profiles(np.ndarray):
                     if count % gradient_accumulate_every == 0:
                         total_loss += loss.item() * gradient_accumulate_every
                         if accelerator.is_main_process:
-                            print(f'{loss}->{total_loss/count} [{count}/{len(dl)}]')
+                            tqdm.write(f'Loss: {loss.item()} -> Average Loss: {total_loss/count} [{count}/{len(dl)}]')
                         
                         optimizer.step()
                         optimizer.zero_grad()
@@ -557,8 +563,8 @@ class Profiles(np.ndarray):
                     # evaluate_model()
                     ema.restore()
 
-                    if (n+1 % save_every == 0) or (n+1 == num_epochs):
-                        milestone = n+1 // save_every if n+1 < num_epochs else 'final'
+                    if ((n+1) % save_every == 0) or ((n+1) == num_epochs):
+                        milestone = (n+1) // save_every if (n+1) < num_epochs else 'final'
                         info = {
                             'epoch': n,
                             'model': accelerator.unwrap_model(ddpm).state_dict(),
