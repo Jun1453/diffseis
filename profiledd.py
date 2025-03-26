@@ -537,7 +537,11 @@ class Profiles(np.ndarray):
             for n in range(load_epoch+1, num_epochs):
                 total_loss = 0
                 count = 0
-                for d, gt in tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch)):
+                if accelerator.is_main_process:
+                    loop = tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch))
+                else: loop = dl
+                
+                for d, gt in loop:
                     count += 1
                     
                     # Forward pass
