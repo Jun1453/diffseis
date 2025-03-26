@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.backends.cudnn as cudnn
 import torch.utils.data as data
 import numpy as np
 import segyio
@@ -12,7 +11,6 @@ from accelerate import Accelerator
 from torch.optim import Adam
 from scipy.signal import butter, filtfilt, decimate, resample
 
-cudnn.benchmark = True
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
     b, a = butter(poles, cutoff, 'highpass', fs=sample_rate)
