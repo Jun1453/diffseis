@@ -451,13 +451,14 @@ class Profiles(np.ndarray):
                         loc_x_end = loc_x_start+self.unit_size[0]
 
                         index = k + j*self.x_tile + i*self.x_tile*self.y_tile
-                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += self[index].numpy()[0]
+                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += self[index].numpy()[0].T
                         weight[loc_y_start:loc_y_end, loc_x_start:loc_x_end] += np.ones((self.unit_size[1], self.unit_size[0]))
                     
             
             return rebuilt_profiles/weight
 
         def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda'):
+            if hasattr(self, 'ground_truth'): raise Exception('Fragment with appointed target data cannot be denoised')
             parameters = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)['model']
 
             del parameters['betas']
@@ -521,22 +522,22 @@ class Profiles(np.ndarray):
             # Initialize model with loaded data
             if load_from is not None:
                 load_model = torch.load(str(load_from))
-                start_epoch = load_model['epoch'] + 1
+                load_epoch = load_model['epoch']
                 ddpm.load_state_dict(load_model['model'])
                 ema.load_state_dict(load_model['ema'])
                 optimizer.load_state_dict(load_model['optimizer'])
             else:
-                start_epoch = 0
+                load_epoch = 0
 
             # Prepare for distributed training
             ddpm, optimizer = accelerator.prepare(ddpm, optimizer)
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
             dl = accelerator.prepare(dl)
 
-            for n in tqdm(range(start_epoch, num_epochs), desc="Training Epochs"):
+            for n in range(load_epoch+1, num_epochs):
                 total_loss = 0
                 count = 0
-                for d, gt in dl:
+                for d, gt in tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch)):
                     count += 1
                     
                     # Forward pass
@@ -549,22 +550,22 @@ class Profiles(np.ndarray):
                     if count % gradient_accumulate_every == 0:
                         total_loss += loss.item() * gradient_accumulate_every
                         if accelerator.is_main_process:
-                            tqdm.write(f'Loss: {loss.item()} -> Average Loss: {total_loss/count} [{count}/{len(dl)}]')
+                            tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
                         
                         optimizer.step()
                         optimizer.zero_grad()
                         ema.update(ddpm)
 
                 if accelerator.is_main_process:
-                    print(f'Epoch {n}: {total_loss/count}')
+                    print(f'Epoch {n}: {(total_loss/count):.4e}')
 
                     ema.apply_shadow()
                     ddpm.eval()
                     # evaluate_model()
                     ema.restore()
 
-                    if ((n+1) % save_every == 0) or ((n+1) == num_epochs):
-                        milestone = (n+1) // save_every if (n+1) < num_epochs else 'final'
+                    if (n % save_every == 0) or (n == num_epochs):
+                        milestone = n // save_every if n < num_epochs else 'final'
                         info = {
                             'epoch': n,
                             'model': accelerator.unwrap_model(ddpm).state_dict(),
