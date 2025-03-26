@@ -65,5 +65,13 @@ diffusion = GaussianDiffusion(
 )
 
 if __name__ == '__main__':
-    ds_data.train(diffusion, 200, 32, save_every=5, learning_rate=3e-6, results_folder='results/demultiple0324-oop')
+    ds_data.train(diffusion, 200, 64, gradient_accumulate_every=1, save_every=5, learning_rate=3e-6, results_folder='results/demultiple0324-oop', load_from='results/demultiple0324-oop/model-14.pt')
+    
+
+
+
+
+
+
+
 
