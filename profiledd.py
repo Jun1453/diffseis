@@ -271,6 +271,12 @@ class Profiles(np.ndarray):
             for j in range(len(y)): y[j] -= abs(x[j])/self.reduction_vel
         z = raw[:sample_num,:]
         return x,y,z
+    
+    def geospread_corr(self, func=lambda x: max(1, 1*(abs(x)/20))):
+        for i in range(self.shape[0]):
+            for j in range(self.shape[2]):
+                self[i:,j] *= func(self.offsets[i][j])
+        return self
 
     def plot(self, figsize=None, cmap='seismic', vmin=-1, vmax=1, tmax=None, label_offset=True, plot_reference_arrival=False):
         """Generate subplots for each profile along dimension 0
@@ -375,7 +381,7 @@ class Profiles(np.ndarray):
             else: sample_min, sample_max = (int(time_crop[0]*profiles.sampling_rate), int(time_crop[1]*profiles.sampling_rate))
             self.x_tile = 1 + (profiles.shape[2]-unit_size[0])//x_move
             self.y_tile = 1 + ((sample_max-sample_min)-unit_size[1])//y_move
-            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[1], unit_size[0]))
+            self.fragments = np.zeros((self.profiles.shape[0]*self.x_tile*self.y_tile , unit_size[0], unit_size[1]))
             print(self.fragments.shape)
 
             for i in range(self.fragments.shape[0]):
@@ -391,11 +397,11 @@ class Profiles(np.ndarray):
                     for j in range(unit_size[0]):
                         loc_reduced_y_start = int(loc_y_start + reduced_times_in_sample[j])
                         buffer_start = min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start)
-                        self.fragments[i,:buffer_start,j] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
+                        self.fragments[i,j,:buffer_start] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
                         if buffer_start < unit_size[1]:
-                            self.fragments[i,buffer_start:,j] = np.zeros((unit_size[1]-buffer_start))
+                            self.fragments[i,j,buffer_start:] = np.zeros((unit_size[1]-buffer_start))
                 else:
-                    self.fragments[i] = self.profiles[num_profile, loc_y_start:loc_y_start+unit_size[1], loc_x_start:loc_x_start+unit_size[0]]
+                    self.fragments[i] = self.profiles[num_profile, loc_x_start:loc_x_start+unit_size[0], loc_y_start:loc_y_start+unit_size[1]].T
         
         def __len__(self):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
