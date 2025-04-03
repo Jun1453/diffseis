@@ -534,7 +534,7 @@ class Profiles(np.ndarray):
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
             dl = accelerator.prepare(dl)
 
-            for n in range(load_epoch+1, num_epochs):
+            for n in range(load_epoch+1, num_epochs+1):
                 total_loss = 0
                 count = 0
                 for d, gt in tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch)):
