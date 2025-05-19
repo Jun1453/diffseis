@@ -119,15 +119,30 @@ class Profiles(np.ndarray):
         # If the result is a Profiles instance, update its offsets
         if isinstance(sliced_array, type(self)):
             if isinstance(key, tuple):
-                # For multi-dimensional slicing, only use first dimension for offsets
-                sliced_array.offsets = self.offsets[key[0]]
-                if self.first_arrival_reference is not None:
-                    sliced_array.first_arrival_reference = self.first_arrival_reference[key[0]]
+                if type(key[0]) is slice:
+                    # For multi-profile slicing
+                    if len(key) == 3:
+                        sliced_array.offsets = [offset[key[-1]] for offset in self.offsets[key[0]]]
+                        if self.first_arrival_reference is not None:
+                            sliced_array.first_arrival_reference = [fa[key[-1]] for fa in self.first_arrival_reference[key[0]]]
+                    else:
+                        sliced_array.offsets = self.offsets[key[-1]]
+                        if self.first_arrival_reference is not None: 
+                            sliced_array.first_arrival_reference = self.first_arrival_reference[key[-1]]
+                else:
+                    sliced_array.offsets = self.offsets[key[0]][key[-1]]
+                    if self.first_arrival_reference is not None:
+                        sliced_array.first_arrival_reference = self.first_arrival_reference[key[0]][key[-1]]
             else:
                 sliced_array.offsets = self.offsets[key]
                 if self.first_arrival_reference is not None:
                     sliced_array.first_arrival_reference = self.first_arrival_reference[key]
         return sliced_array
+
+    def overwrite_segy(self, segy_file): # for Fujie san
+        with segyio.open(segy_file, 'r+', strict=False) as f:
+            f.raw = self # placeholder, more processing is needed
+            f.write()
 
     @classmethod
     def load(cls, segy_file, data_handle, filter_history=[], reduction_vel=0):
@@ -388,18 +403,19 @@ class Profiles(np.ndarray):
                 num_y_tile = (i % (self.x_tile * self.y_tile)) // self.x_tile
                 loc_x_start = num_x_tile * x_move
                 loc_y_start = num_y_tile * y_move + sample_min
-                if self.profiles.reduction_vel is not None:
+                if self.profiles.reduction_vel:
                     reduced_times_in_sample = np.abs(self.profiles.offsets[num_profile][loc_x_start:loc_x_start+unit_size[0]]
                                                                 /self.profiles.reduction_vel)*self.profiles.sampling_rate
                     # print(reduced_times_in_sample)
                     for j in range(unit_size[0]):
                         loc_reduced_y_start = int(loc_y_start + reduced_times_in_sample[j])
-                        buffer_start = min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start)
-                        self.fragments[i,j,:buffer_start] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
+                        buffer_start = max(min(unit_size[1], self.profiles.shape[1]-loc_reduced_y_start),0)
+                        if buffer_start > 0:
+                            self.fragments[i,j,:buffer_start] = self.profiles[num_profile, loc_reduced_y_start:loc_reduced_y_start+unit_size[1], loc_x_start+j]
                         if buffer_start < unit_size[1]:
                             self.fragments[i,j,buffer_start:] = np.zeros((unit_size[1]-buffer_start))
                 else:
-                    self.fragments[i] = self.profiles[num_profile, loc_x_start:loc_x_start+unit_size[0], loc_y_start:loc_y_start+unit_size[1]].T
+                    self.fragments[i] = self.profiles[num_profile, loc_x_start:loc_x_start+unit_size[0], loc_y_start:loc_y_start+unit_size[1]]
         
         def __len__(self):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
@@ -508,7 +524,7 @@ class Profiles(np.ndarray):
 
             return results
         
-        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
 
@@ -537,7 +553,11 @@ class Profiles(np.ndarray):
             for n in range(load_epoch+1, num_epochs+1):
                 total_loss = 0
                 count = 0
-                for d, gt in tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch)):
+                if accelerator.is_main_process:
+                    loop = tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch))
+                else: loop = dl
+                
+                for d, gt in loop:
                     count += 1
                     
                     # Forward pass
@@ -554,21 +574,21 @@ class Profiles(np.ndarray):
                         
                         optimizer.step()
                         optimizer.zero_grad()
-                        ema.update(ddpm)
+                        if n > pre_ema_epoch: ema.update(ddpm)
 
                 if accelerator.is_main_process:
                     print(f'Epoch {n}: {(total_loss/count):.4e}')
 
-                    ema.apply_shadow()
-                    ddpm.eval()
-                    # evaluate_model()
-                    ema.restore()
+                    # if n > pre_ema_epoch:
+                    #     ema.apply_shadow()
+                    #     ema.restore()
 
                     if (n % save_every == 0) or (n == num_epochs):
                         milestone = n // save_every if n < num_epochs else 'final'
                         info = {
                             'epoch': n,
-                            'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            # 'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            'model': accelerator.unwrap_model(ema.module).state_dict(),
                             'ema': ema.state_dict(),
                             'optimizer': optimizer.state_dict()
                         }
