@@ -36,7 +36,7 @@ trainer = Trainer(
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
     save_and_sample_every=50000,
-    result_suffix = "0317-waveform"
+    result_suffix = "0404-waveform"
 )
 
 if __name__ == '__main__':

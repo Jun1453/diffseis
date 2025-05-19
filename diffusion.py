@@ -401,13 +401,14 @@ class Trainer(object):
         self.scaler.load_state_dict(data['scaler'])
 
     def train(self):
+        #print('ds size:', len(self.ds))
         while self.step <= self.train_num_steps:
             for i in range(self.gradient_accumulate_every):
                 img = next(self.dl)
                 inputs = img[0].cuda()
                 gt = img[1].cuda()
                 
-                with autocast(enabled = self.amp):
+                with autocast('cuda', enabled = self.amp):
                     loss = self.model(inputs, gt).cuda()
                     self.scaler.scale(loss / self.gradient_accumulate_every).backward()
 

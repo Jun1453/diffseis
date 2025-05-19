@@ -20,4 +20,5 @@ conda activate diffseis-cuda
 #module load python torch
 
 
-python run.py 
+python run.py
+#python train.py

@@ -20,4 +20,4 @@ conda activate diffseis-cuda
 #module load python torch
 
 
-python rebuild.py results/demultiple0116-waveform/run.py 6 model-final.pt
+python rebuild.py results/demultiple0404-waveform/run.py 6 model-final.pt
