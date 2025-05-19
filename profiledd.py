@@ -524,7 +524,7 @@ class Profiles(np.ndarray):
 
             return results
         
-        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
 
@@ -574,21 +574,21 @@ class Profiles(np.ndarray):
                         
                         optimizer.step()
                         optimizer.zero_grad()
-                        ema.update(ddpm)
+                        if n > pre_ema_epoch: ema.update(ddpm)
 
                 if accelerator.is_main_process:
                     print(f'Epoch {n}: {(total_loss/count):.4e}')
 
-                    ema.apply_shadow()
-                    ddpm.eval()
-                    # evaluate_model()
-                    ema.restore()
+                    # if n > pre_ema_epoch:
+                    #     ema.apply_shadow()
+                    #     ema.restore()
 
                     if (n % save_every == 0) or (n == num_epochs):
                         milestone = n // save_every if n < num_epochs else 'final'
                         info = {
                             'epoch': n,
-                            'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            # 'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            'model': accelerator.unwrap_model(ema.module).state_dict(),
                             'ema': ema.state_dict(),
                             'optimizer': optimizer.state_dict()
                         }
