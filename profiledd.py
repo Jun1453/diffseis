@@ -563,6 +563,13 @@ class Profiles(np.ndarray):
                     # Forward pass
                     loss = ddpm(d, gt)
                     loss = loss / gradient_accumulate_every
+
+                    # Check for NaN loss
+                    if torch.isnan(loss):
+                        if accelerator.is_main_process:
+                            tqdm.write('Warning: NaN loss encountered, skipping update.')
+                        count -= 1
+                        continue
                     
                     # Backward pass
                     accelerator.backward(loss)
