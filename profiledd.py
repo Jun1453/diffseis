@@ -324,9 +324,12 @@ class Profiles(np.ndarray):
             im = ax.pcolorfast(x[:z.shape[0],:z.shape[1]], y[:z.shape[0],:z.shape[1]], z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
 
             if plot_reference_arrival:
-                if self.first_arrival_reference[i] is not None:
-                    # print(self.offsets[i])
-                    im = ax.plot(self.offsets[i], self.first_arrival_reference[i]/self.sampling_rate, 'y', label='reference arrival', alpha=0.7)
+                if self.first_arrival_reference is None:
+                    raise Exception("First arrival reference is not defined in the Profiles instance.")
+                else:
+                    if self.first_arrival_reference[i] is not None:
+                        # print(self.offsets[i])
+                        im = ax.plot(self.offsets[i], self.first_arrival_reference[i]/self.sampling_rate, 'y', label='reference arrival', alpha=0.7)
 
             if i == len(axes)-1:
                 if label_offset: ax.set_xlabel('Offset (km)')
