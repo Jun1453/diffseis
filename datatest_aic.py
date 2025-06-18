@@ -7,7 +7,9 @@ from refine_train import stn_num_to_n, fit_curves
 count = 0
 profiles_data = None
 profiles_target = None
-myfilter = lambda x: highpass(x, 2.0, pf.sampling_rate, poles=4)
+# myfilter = lambda x: highpass(x, 2.0, pf.sampling_rate, poles=4)
+def myfilter(x):
+    return highpass(x, 2.0, pf.sampling_rate, poles=4)
 
 # look up existing dict for corresponding first arrival curve of each OBS
 for key, value in stn_num_to_n.items():
