@@ -298,7 +298,7 @@ class Profiles(np.ndarray):
     def geospread_corr(self, func=lambda x: max(1, 1*(abs(x)/20))):
         for i in range(self.shape[0]):
             for j in range(self.shape[2]):
-                self[i:,j] *= func(self.offsets[i][j])
+                self[i,:,j] *= func(self.offsets[i][j])
         return self
 
     def plot(self, figsize=None, cmap='seismic', vmin=-1, vmax=1, tmax=None, label_offset=True, plot_reference_arrival=False):
