@@ -275,9 +275,9 @@ class Profiles(np.ndarray):
                  reduction_vel=self.reduction_vel,
                  offsets=self.offsets)
     @classmethod 
-    def read(cls, filename):
+    def read(cls, filename, allow_pickle=True):
         """Read Profiles instance from file"""
-        npzfile = np.load(filename)
+        npzfile = np.load(filename, allow_pickle=allow_pickle)
         return cls(npzfile['data'],
                   sampling_rate=npzfile['sampling_rate'].item(),
                   filter_history=list(npzfile['filter_history']),
