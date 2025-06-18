@@ -7,7 +7,8 @@ from PIL import Image
 from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
-from accelerate import Accelerator
+from datetime import timedelta
+from accelerate import Accelerator, DistributedDataParallelKwargs, InitProcessGroupKwargs
 from torch.optim import Adam
 from scipy.signal import butter, filtfilt, decimate, resample
 
@@ -529,7 +530,9 @@ class Profiles(np.ndarray):
             if save_every is None: save_every = num_epochs
 
             # Initialize accelerator
-            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+            timeout = InitProcessGroupKwargs(timeout=timedelta(minutes=15))
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no', kwargs_handlers=[kwargs, timeout])
             device = accelerator.device
 
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
