@@ -97,7 +97,10 @@ class Profiles(np.ndarray):
         obj.filter_history = filter_history  # Tuple of (low_freq, high_freq) in Hz
         obj.reduction_vel = reduction_vel  # Reduction velocity in km/s
         obj.offsets = offsets  # Offsets in km
-        obj.first_arrival_reference = first_arrival_reference  # Offsets in km
+        if first_arrival_reference is None:
+            obj.first_arrival_reference = [ [None for _ in p] for p in offsets]
+        else:
+            obj.first_arrival_reference = first_arrival_reference  # First arrival in sec
         return obj
     
     def __add__(self, other):
@@ -124,19 +127,22 @@ class Profiles(np.ndarray):
                     # For multi-profile slicing
                     if len(key) == 3:
                         sliced_array.offsets = [offset[key[-1]] for offset in self.offsets[key[0]]]
-                        if self.first_arrival_reference is not None:
+                        if True:# self.first_arrival_reference is not None:
                             sliced_array.first_arrival_reference = [fa[key[-1]] for fa in self.first_arrival_reference[key[0]]]
                     else:
                         sliced_array.offsets = self.offsets[key[-1]]
-                        if self.first_arrival_reference is not None: 
+                        if True:# self.first_arrival_reference is not None: 
                             sliced_array.first_arrival_reference = self.first_arrival_reference[key[-1]]
                 else:
                     sliced_array.offsets = self.offsets[key[0]][key[-1]]
-                    if self.first_arrival_reference is not None:
-                        sliced_array.first_arrival_reference = self.first_arrival_reference[key[0]][key[-1]]
+                    if True:# self.first_arrival_reference is not None:
+                        try:
+                            sliced_array.first_arrival_reference = self.first_arrival_reference[key[0]][key[-1]]
+                        except:
+                            raise ValueError(sliced_array.first_arrival_reference)
             else:
                 sliced_array.offsets = self.offsets[key]
-                if self.first_arrival_reference is not None:
+                if True:# self.first_arrival_reference is not None:
                     sliced_array.first_arrival_reference = self.first_arrival_reference[key]
         return sliced_array
 
@@ -189,10 +195,11 @@ class Profiles(np.ndarray):
         concat_arrivals = []
         for p in profiles:
             concat_offsets += p.offsets
-            if profiles[0].first_arrival_reference: concat_arrivals += p.first_arrival_reference
+            # if profiles[0].first_arrival_reference:
+            concat_arrivals += p.first_arrival_reference
         
         return cls(concat_data,
-                  first_arrival_reference=concat_arrivals if concat_arrivals else None,
+                  first_arrival_reference=concat_arrivals,# if concat_arrivals else None,
                   sampling_rate=base_rate,
                   filter_history=profiles[0].filter_history,
                   reduction_vel=profiles[0].reduction_vel,
@@ -227,6 +234,9 @@ class Profiles(np.ndarray):
                 stacked[i,:,j] = self[i,:,j] * (1/noise[i,j])
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
         stacked = np.sum(stacked, axis=0)
+
+        if first_arrival_reference is None:
+            first_arrival_reference = [first_arrival_reference] * len(self.offsets[0])
 
         if orig_profile_num:
             return type(self)([stacked]*len(self.offsets),
@@ -325,9 +335,12 @@ class Profiles(np.ndarray):
             im = ax.pcolorfast(x[:z.shape[0],:z.shape[1]], y[:z.shape[0],:z.shape[1]], z[:-1,:-1], cmap=cmap, vmin=vmin, vmax=vmax)
 
             if plot_reference_arrival:
-                if self.first_arrival_reference[i] is not None:
-                    # print(self.offsets[i])
-                    im = ax.plot(self.offsets[i], self.first_arrival_reference[i]/self.sampling_rate, 'y', label='reference arrival', alpha=0.7)
+                if self.first_arrival_reference is None:
+                    raise Exception("First arrival reference is not defined in the Profiles instance.")
+                else:
+                    if self.first_arrival_reference[i] is not None:
+                        # print(self.offsets[i])
+                        im = ax.plot(self.offsets[i], self.first_arrival_reference[i]/self.sampling_rate, 'y', label='reference arrival', alpha=0.7)
 
             if i == len(axes)-1:
                 if label_offset: ax.set_xlabel('Offset (km)')
