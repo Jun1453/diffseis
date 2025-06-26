@@ -95,11 +95,24 @@ class Profiles(np.ndarray):
         obj.sampling_rate = sampling_rate  # Sampling rate in Hz
         obj.filter_history = filter_history  # Tuple of (low_freq, high_freq) in Hz
         obj.reduction_vel = reduction_vel  # Reduction velocity in km/s
-        obj.offsets = offsets  # Offsets in km
+        # Offsets in km
+        if type(offsets) is not list:
+            if offsets.ndim == 1:
+                offsets = [offsets]
+            else:
+                offsets = [ offset for offset in offsets]
+        obj.offsets = offsets
+        # First arrival in sec
         if first_arrival_reference is None:
             obj.first_arrival_reference = [ [None for _ in p] for p in offsets]
         else:
-            obj.first_arrival_reference = first_arrival_reference  # First arrival in sec
+            if type(first_arrival_reference) is not list:
+                if first_arrival_reference.ndim == 1:
+                    first_arrival_reference = [first_arrival_reference]
+                else:
+                    first_arrival_reference = [ fa for fa in first_arrival_reference]
+            else:
+                obj.first_arrival_reference = first_arrival_reference  
         return obj
     
     def __add__(self, other):
@@ -127,16 +140,18 @@ class Profiles(np.ndarray):
                     if len(key) == 3:
                         sliced_array.offsets = [offset[key[-1]] for offset in self.offsets[key[0]]]
                         if True:# self.first_arrival_reference is not None:
-                            sliced_array.first_arrival_reference = [fa[key[-1]] for fa in self.first_arrival_reference[key[0]]]
+                            sliced_array.first_arrival_reference = [fa[key[-1]] if fa is not None else None for fa in self.first_arrival_reference[key[0]]]
                     else:
                         sliced_array.offsets = self.offsets[key[-1]]
                         if True:# self.first_arrival_reference is not None: 
-                            sliced_array.first_arrival_reference = self.first_arrival_reference[key[-1]]
+                            fa = self.first_arrival_reference
+                            sliced_array.first_arrival_reference = fa[key[-1]] if fa is not None else None
                 else:
                     sliced_array.offsets = self.offsets[key[0]][key[-1]]
                     if True:# self.first_arrival_reference is not None:
                         try:
-                            sliced_array.first_arrival_reference = self.first_arrival_reference[key[0]][key[-1]]
+                            fa = self.first_arrival_reference[key[0]]
+                            sliced_array.first_arrival_reference = fa[key[-1]] if fa is not None else None
                         except:
                             raise ValueError(sliced_array.first_arrival_reference)
             else:
@@ -195,7 +210,7 @@ class Profiles(np.ndarray):
         for p in profiles:
             concat_offsets += p.offsets
             # if profiles[0].first_arrival_reference:
-            concat_arrivals += p.first_arrival_reference
+            concat_arrivals += p.first_arrival_reference if p.first_arrival_reference else [None]
         
         return cls(concat_data,
                   first_arrival_reference=concat_arrivals,# if concat_arrivals else None,
@@ -228,7 +243,14 @@ class Profiles(np.ndarray):
                     noise[i,j] = np.sqrt(np.mean(self[i,start:end,j]**2))
                 else:
                     # noise[i,j] = np.mean(np.abs(self[i,:50,j]))
-                    noise[i,j] = np.sqrt(np.mean(self[i,:50,j]**2))
+                    if (abs(self.offsets[i][j]) < 3.8):
+                        central_stns = int(8.0/(self.offsets[i][1]-self.offsets[i][0]))
+                        if j<central_stns:
+                            noise[i,j] = np.sqrt(np.mean(self[i,:20,j+central_stns]**2))
+                        else:
+                            noise[i,j] = np.sqrt(np.mean(self[i,:20,j-central_stns]**2))
+                    else:
+                        noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
                 
                 stacked[i,:,j] = self[i,:,j] * (1/noise[i,j])
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
