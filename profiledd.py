@@ -219,7 +219,7 @@ class Profiles(np.ndarray):
                   reduction_vel=profiles[0].reduction_vel,
                   offsets=concat_offsets)
 
-    def diversity_stack(self, first_arrival_reference=None, orig_profile_num=False):
+    def diversity_stack(self, first_arrival_reference=None, orig_profile_num=False, normalize_to_profile_num=False):
         """Stack along first dimension using diversity stack method"""
         if self.ndim < 2:
             raise ValueError("Array must have at least 2 dimensions")
@@ -243,7 +243,7 @@ class Profiles(np.ndarray):
                     noise[i,j] = np.sqrt(np.mean(self[i,start:end,j]**2))
                 else:
                     # noise[i,j] = np.mean(np.abs(self[i,:50,j]))
-                    if (abs(self.offsets[i][j]) < 3.8):
+                    if False:# (abs(self.offsets[i][j]) < 3.8):
                         central_stns = int(8.0/(self.offsets[i][1]-self.offsets[i][0]))
                         if j<central_stns:
                             noise[i,j] = np.sqrt(np.mean(self[i,:20,j+central_stns]**2))
@@ -252,7 +252,7 @@ class Profiles(np.ndarray):
                     else:
                         noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
                 
-                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j])
+                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * ((1/stacked.shape[0]) if normalize_to_profile_num else 1)
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
         stacked = np.sum(stacked, axis=0)
 
