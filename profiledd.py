@@ -219,7 +219,7 @@ class Profiles(np.ndarray):
                   reduction_vel=profiles[0].reduction_vel,
                   offsets=concat_offsets)
 
-    def diversity_stack(self, first_arrival_reference=None, orig_profile_num=False, normalize_to_profile_num=False):
+    def diversity_stack(self, first_arrival_reference=None, orig_profile_num=False, normalize_to_profile_num=False, normalize_to_one=False):
         """Stack along first dimension using diversity stack method"""
         if self.ndim < 2:
             raise ValueError("Array must have at least 2 dimensions")
@@ -243,17 +243,20 @@ class Profiles(np.ndarray):
                     noise[i,j] = np.sqrt(np.mean(self[i,start:end,j]**2))
                 else:
                     # noise[i,j] = np.mean(np.abs(self[i,:50,j]))
-                    if False:# (abs(self.offsets[i][j]) < 3.8):
+                    # if (abs(self.offsets[i][j]) < 3.8):
+                    if False:
                         central_stns = int(8.0/(self.offsets[i][1]-self.offsets[i][0]))
                         if j<central_stns:
                             noise[i,j] = np.sqrt(np.mean(self[i,:20,j+central_stns]**2))
                         else:
                             noise[i,j] = np.sqrt(np.mean(self[i,:20,j-central_stns]**2))
                     else:
-                        noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
+                        # noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
+                        noise[i,j] = 1.
                 
-                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * ((1/stacked.shape[0]) if normalize_to_profile_num else 1)
+                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * ((1/stacked.shape[0]) if (normalize_to_profile_num) or (normalize_to_one) else 1)
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
+            if normalize_to_one: stacked[:,:,j] = stacked[:,:,j] / sum(1/noise[:,j]) 
         stacked = np.sum(stacked, axis=0)
 
         if first_arrival_reference is None:
@@ -468,7 +471,7 @@ class Profiles(np.ndarray):
             if len(self) != len(ground_truth): raise ValueError("size of the given ground_truth does not match")
             self.ground_truth = ground_truth
         
-        def rebuild(self, x_move_factor=None, y_move_factor=None, x_move=None, y_move=None):
+        def rebuild(self, x_move_factor=None, y_move_factor=None, x_move=None, y_move=None) -> "Profiles":
             if x_move_factor is not None:
                 rebuild_x_move = int(self.x_move * x_move_factor)
             elif x_move is not None:
