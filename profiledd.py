@@ -229,7 +229,7 @@ class Profiles(np.ndarray):
 
         # Diversity stack
         stacked = np.zeros_like(self)
-        noise = np.ones((self.shape[0],self.shape[2]))
+        noise = np.ones((self.shape[0],self.shape[2])) * float(np.median(np.sqrt((np.ravel(self[:,:20,:]**2)))))
         for j in range(self.shape[2]):
             for i in range(self.shape[0]):
                 start = int(self.sampling_rate*abs(self.offsets[i][j])/self.reduction_vel)
@@ -252,11 +252,12 @@ class Profiles(np.ndarray):
                             noise[i,j] = np.sqrt(np.mean(self[i,:20,j-central_stns]**2))
                     else:
                         # noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
-                        noise[i,j] = 1.
+                        # noise[i,j] = 1.
+                        pass
                 
                 stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * ((1/stacked.shape[0]) if (normalize_to_profile_num) or (normalize_to_one) else 1)
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
-            if normalize_to_one: stacked[:,:,j] = stacked[:,:,j] / sum(1/noise[:,j]) 
+            if normalize_to_one: stacked[:,:,j] = stacked[:,:,j] / np.max(1/noise[:,j]) 
         stacked = np.sum(stacked, axis=0)
 
         if first_arrival_reference is None:
