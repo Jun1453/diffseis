@@ -257,7 +257,7 @@ class Profiles(np.ndarray):
                 
                 stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * ((1/stacked.shape[0]) if (normalize_to_profile_num) or (normalize_to_one) else 1)
                 # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
-            if normalize_to_one: stacked[:,:,j] = stacked[:,:,j] / np.max(1/noise[:,j]) 
+            if normalize_to_one: stacked[:,:,j] = stacked[:,:,j] / np.mean(1/noise[:,j]) 
         stacked = np.sum(stacked, axis=0)
 
         if first_arrival_reference is None:
