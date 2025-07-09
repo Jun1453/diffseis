@@ -22,7 +22,7 @@ for key, value in stn_num_to_n.items():
 
     # load segy files and preprocess the record section
     pf = Profiles.load(f'noto/OBS/NT24OBS_J{key}C-1.sgy', jamstec_handler)
-    pf = pf.filter(myfilter).reduction(6.0)[:,:6000,:]
+    pf = pf.filter(myfilter).reduction(6.0)[:,:6000,:]#.geospread_corr()
     
     # # load pre-calculated arrival curve and correlate time series origin
     # arrival = fit_curves[f'{key}'] + pf.sampling_rate*0.5
@@ -44,8 +44,8 @@ for key, value in stn_num_to_n.items():
         profiles_target = Profiles.concatenate((profiles_target, pf_stack_all))
 
 # generate pytorch dataset with fragmentized record section
-ds_gt = profiles_target.fragmentize(vclip= 50, t_interval=7.04, x_move_ratio=0.2, y_move_ratio=0.2)
-ds_data = profiles_data.fragmentize(vclip=300, t_interval=7.04, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_gt = profiles_target.fragmentize(vclip= 50, tmin=0, t_interval=4.5, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_data = profiles_data.fragmentize(vclip=300, tmin=0, t_interval=4.5, x_move_ratio=0.2, y_move_ratio=0.2)
 ds_data.set_ground_truth(ds_gt)
 # del profiles_data
 # del profiles_target

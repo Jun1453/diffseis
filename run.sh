@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#PBS -N diffseis_64x256_250ep
+#PBS -N diffseis_64x256_200ep
 #PBS -q gpu
 #PBS -b 1
 #PBS -r n
