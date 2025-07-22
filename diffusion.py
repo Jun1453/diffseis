@@ -122,7 +122,14 @@ class GaussianDiffusion(nn.Module):
         elif loss_type == 'l2':
             self.loss_func = nn.MSELoss(reduction='mean')
         elif loss_type == 'l1l2':
-            self.loss_func = (nn.L1Loss(reduction='mean')+nn.MSELoss(reduction='mean'))/2
+            class L1L2Loss(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.l1 = nn.L1Loss(reduction='mean')
+                    self.l2 = nn.MSELoss(reduction='mean')
+                def forward(self, input, target):
+                    return 0.5 * (self.l1(input, target) + self.l2(input, target))
+            self.loss_func = L1L2Loss()
         else:
             raise NotImplementedError()
 
