@@ -28,7 +28,7 @@ for key, value in stn_num_to_n.items():
     pf_stack3 =   pf[1:4].diversity_stack(orig_profile_num=True, first_arrival_reference=padded_arrival, normalize_to_one=True)
     pf_stack2 = pf[0:5:4].diversity_stack(orig_profile_num=True, first_arrival_reference=np.flip(padded_arrival), normalize_to_one=True)
     pf_stack_all = Profiles.concatenate((pf_stack2[0:1],pf_stack3,pf_stack2[1:2]))
-    norm_pf = Profiles.concatenate([pf[n:n+1].diversity_stack(orig_profile_num=True, normalize_to_one=True) for n in range(5)])
+    norm_pf = Profiles.concatenate([pf[n:n+1].diversity_stack(orig_profile_num=True) for n in range(5)])
     # append new section to existing data
     if profiles_target is None:
         #profiles_data = pf
@@ -40,9 +40,8 @@ for key, value in stn_num_to_n.items():
         profiles_target = Profiles.concatenate((profiles_target, pf_stack_all))
 
 # generate pytorch dataset with fragmentized record section
-ds_gt = profiles_target.fragmentize(vclip=300, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
-#ds_data = profiles_data.fragmentize(vclip=300, t_interval=3.07, x_move_ratio=0.2, y_move_ratio=0.2)
-ds_data = profiles_data.fragmentize(vclip=300, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_gt = profiles_target.fragmentize(vclip=25, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_data = profiles_data.fragmentize(vclip=25, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
 ds_data.set_ground_truth(ds_gt)
 del profiles_data
 del profiles_target
@@ -68,14 +67,5 @@ diffusion = GaussianDiffusion(
 )
 
 if __name__ == '__main__':
-    ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=50, learning_rate=3e-5, results_folder='results/demultiple0703-oop')
-    
-    
-
-
-
-
-
-
-
+    ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=50, learning_rate=3e-5, results_folder='results/demultiple0722a-oop')
 
