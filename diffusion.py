@@ -118,9 +118,11 @@ class GaussianDiffusion(nn.Module):
         self.noise_mix_ratio = noise_mix_ratio
         
         if loss_type == 'l1':
-            self.loss_func = nn.L1Loss(reduction='sum')
+            self.loss_func = nn.L1Loss(reduction='mean')
         elif loss_type == 'l2':
-            self.loss_func = nn.MSELoss(reduction='sum')
+            self.loss_func = nn.MSELoss(reduction='mean')
+        elif loss_type == 'l1l2':
+            self.loss_func = (nn.L1Loss(reduction='mean')+nn.MSELoss(reduction='mean'))/2
         else:
             raise NotImplementedError()
 
