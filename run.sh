@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#PBS -N diffseis_64x256_300ep
+#PBS -N diffseis_64x256_200ep
 #PBS -q gpu
 #PBS -b 1
 #PBS -r n
-#PBS -l elapstim_req=36:00:00
+#PBS -l elapstim_req=24:00:00
 #PBS -o stdout.%s.%j
 #PBS -e stderr.%s.%j
 #PBS --custom gpusetnum-lhost=1
