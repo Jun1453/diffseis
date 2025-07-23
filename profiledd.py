@@ -139,16 +139,16 @@ class Profiles(np.ndarray):
                     # For multi-profile slicing
                     if len(key) == 3:
                         sliced_array.offsets = [offset[key[-1]] for offset in self.offsets[key[0]]]
-                        if True:# self.first_arrival_reference is not None:
+                        if self.first_arrival_reference is not None:
                             sliced_array.first_arrival_reference = [fa[key[-1]] if fa is not None else None for fa in self.first_arrival_reference[key[0]]]
                     else:
                         sliced_array.offsets = self.offsets[key[-1]]
-                        if True:# self.first_arrival_reference is not None: 
+                        if self.first_arrival_reference is not None: 
                             fa = self.first_arrival_reference
                             sliced_array.first_arrival_reference = fa[key[-1]] if fa is not None else None
                 else:
                     sliced_array.offsets = self.offsets[key[0]][key[-1]]
-                    if True:# self.first_arrival_reference is not None:
+                    if self.first_arrival_reference is not None:
                         try:
                             fa = self.first_arrival_reference[key[0]]
                             sliced_array.first_arrival_reference = fa[key[-1]] if fa is not None else None
@@ -156,7 +156,7 @@ class Profiles(np.ndarray):
                             raise ValueError(sliced_array.first_arrival_reference)
             else:
                 sliced_array.offsets = self.offsets[key]
-                if True:# self.first_arrival_reference is not None:
+                if self.first_arrival_reference is not None:
                     sliced_array.first_arrival_reference = self.first_arrival_reference[key]
         return sliced_array
 
@@ -642,3 +642,52 @@ class Profiles(np.ndarray):
 
             if accelerator.is_main_process:
                 print('training completed')
+
+        def validate(self, ddpm, batch_size=32, enable_amp=True, gradient_accumulate_every=2, load_from=None, torch_device='cuda'):
+            if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be evaluated with Fragment with no appointed target data')
+            if load_from is None: raise Exception('Model cannot be evaluated without specified parameters to load')
+
+            # Initialize accelerator
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            device = accelerator.device
+
+            # Initialize model with loaded data
+            load_model = torch.load(str(load_from), map_location=device)
+            load_epoch = load_model['epoch']
+            ddpm.load_state_dict(load_model['model'])
+
+            # Prepare for distributed training
+            dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            ddpm, dl = accelerator.prepare(ddpm, dl)
+
+            for n in range(load_epoch, load_epoch+1):
+                total_loss = 0
+                count = 0
+                if accelerator.is_main_process:
+                    loop = tqdm(dl, total=len(dl), desc=f"Evaluating DDPM @ Epoch {n}")
+                else: loop = dl
+                
+                for d, gt in loop:
+                    count += 1
+                    
+                    # Forward pass
+                    loss = ddpm(d, gt)
+                    loss = loss / gradient_accumulate_every
+
+                    # Check for NaN loss
+                    if torch.isnan(loss):
+                        if accelerator.is_main_process:
+                            tqdm.write('Warning: NaN loss encountered, skipping validation.')
+                        count -= 1
+                        continue
+
+                    if count % gradient_accumulate_every == 0:
+                        total_loss += loss.item() * gradient_accumulate_every
+                        # if accelerator.is_main_process:
+                        #     tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
+
+                if accelerator.is_main_process:
+                    print(f'Epoch {n}: {(total_loss/count):.4e}')
+
+            if accelerator.is_main_process:
+                print('validation completed')
