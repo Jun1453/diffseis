@@ -12,6 +12,7 @@ import random
 from torch.utils import data
 from torch.amp import GradScaler, autocast
 import os
+import re
 
 from pathlib import Path
 from torch.optim import Adam
@@ -97,6 +98,22 @@ def default(val, d):
         return val
     return d() if isfunction(d) else d
 
+class CrossSigmoidLoss(nn.Module):
+    def __init__(self, critical=0, width=0.33, reduction='mean'):
+        super().__init__()
+        self.sigmoid = lambda x: 1 / (1 + torch.exp(-(x-critical)/width))
+        self.reduction = reduction
+    def forward(self, input, target):
+        # l = torch.sqrt(torch.abs(self.sigmoid(input) - self.sigmoid(target)))
+        l = torch.abs(self.sigmoid(input) - self.sigmoid(target))
+        if   self.reduction == 'none':
+            return l
+        elif self.reduction == 'sum':
+            return l.sum()
+        elif self.reduction == 'mean':
+            return l.mean()
+        else: raise NotImplementedError("reduction should be either 'none', 'sum', or 'mean'.")
+
 
 class GaussianDiffusion(nn.Module):
     def __init__(
@@ -130,6 +147,10 @@ class GaussianDiffusion(nn.Module):
                 def forward(self, input, target):
                     return 0.5 * (self.l1(input, target) + self.l2(input, target))
             self.loss_func = L1L2Loss()
+        elif re.match(r'cross-sigmoid', loss_type):
+            if loss_type == 'cross-sigmoid': reduction = 'none'
+            else: reduction = loss_type.rsplit('-', 1)[1]
+            self.loss_func = CrossSigmoidLoss(reduction=reduction)
         else:
             raise NotImplementedError()
 
