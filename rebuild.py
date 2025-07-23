@@ -26,7 +26,7 @@ maximum_batch_size = run.trainer.batch_size
 testset_folder = 'dataset/'+run.mode+'/data_test_npy/'
 tile_info = importfile(str(testset_folder+'tile_info.py'))
     
-parameters = torch.load(str(work_folder/model_name), map_location=torch.device('mps'), weights_only=True)['model']
+parameters = torch.load(str(work_folder/model_name), map_location=torch.device('cuda'))['model']
 
 
 del parameters['betas']
@@ -105,7 +105,7 @@ while True:
     
     # get output matrix when full or before break
     if (ds_window_num+1 >= ds_end_num) or (current_batch_size == maximum_batch_size):
-        out = run.diffusion.inference(x_in=batch_in.to("mps"), clip_denoised=False)
+        out = run.diffusion.inference(x_in=batch_in.to("cuda"), clip_denoised=False)
 
         for i in range(current_batch_size):
             inp_2d = batch_in[i,0].cpu().detach().numpy()
@@ -153,9 +153,9 @@ while True:
 
 # canvas_inp /= canvas_wt
 canvas_out /= canvas_wt
-np.save(f'{work_folder}/canvas-fast_gt-{n}.npy', canvas_gt)
-np.save(f'{work_folder}/canvas-fast_inp-{n}.npy', canvas_inp) 
-np.save(f'{work_folder}/canvas-fast_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
+np.save(f'{work_folder}/canvas_gt-{n}.npy', canvas_gt)
+np.save(f'{work_folder}/canvas_inp-{n}.npy', canvas_inp)
+np.save(f'{work_folder}/canvas_{str(model_name).replace(".pt","")}-{n}.npy', canvas_out)
 # print(i)
 
 # fig, ax = plt.subplots(1,1, figsize=(16,6))

@@ -11,7 +11,7 @@ model = UNet(
         dropout=0.5,
         image_size = 256,
         # attn_res=[64, 16]
-).to("mps")#.cuda()
+).cuda()
 
 diffusion = GaussianDiffusion(
     model,
@@ -21,7 +21,7 @@ diffusion = GaussianDiffusion(
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
     noise_mix_ratio = None
-).to("mps")#.cuda()
+).cuda()
 
 trainer = Trainer(
     diffusion,
@@ -29,14 +29,14 @@ trainer = Trainer(
     folder = folder,
     image_size = image_size,
     file_ext='.npy',
-    train_batch_size = 16, #32 for A100; 16 for GTX
-    train_lr = 3e-6,
+    train_batch_size = 32, #32 for A100; 16 for GTX
+    train_lr = 3e-5,
     train_num_steps = 200000,         # total training steps
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                        # turn on mixed precision
-    save_and_sample_every=25000,
-    result_suffix = '0309-waveform'
+    save_and_sample_every=50000,
+    result_suffix = "0404-waveform"
 )
 
 if __name__ == '__main__':

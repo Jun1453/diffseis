@@ -62,19 +62,9 @@ diffusion = GaussianDiffusion(
     channels = 1,
     image_size = ds_data.unit_size,
     timesteps = 2000,
-    loss_type = 'l2', # L1 or L2
+    loss_type = 'cross-sigmoid-mean', # L1 or L2
     noise_mix_ratio = None
 )
 
 if __name__ == '__main__':
-    ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=50, learning_rate=3e-5, results_folder='results/demultiple0722a-oop')
-    
-    
-
-
-
-
-
-
-
-
+    ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=25, learning_rate=3e-5, results_folder='results/demultiple0723-oop')
