@@ -14,11 +14,10 @@ for key, value in stn_num_to_n.items():
 
     # skip negative values that are set for test set
     if value < 0: continue
-    # if int(key) > 1: continue
 
     # load segy files and preprocess the record section
     pf = Profiles.load(f'noto/OBS/NT24OBS_J{key}C-1.sgy', jamstec_handler)
-    pf = pf.filter(myfilter).reduction(6.0)[:,:6000,:]
+    pf = pf.filter(myfilter).reduction(6.0)
     
     # load pre-calculated arrival curve and correlate time series origin
     arrival = fit_curves[f'{key}'] + pf.sampling_rate*0.5
@@ -54,7 +53,7 @@ model = UNet(
         dropout=0.5,
         image_size = ds_data.unit_size[1],
         # attn_res=[64, 16]
-)
+).to("mps")#.cuda()
 
 diffusion = GaussianDiffusion(
     model,
@@ -64,7 +63,7 @@ diffusion = GaussianDiffusion(
     timesteps = 2000,
     loss_type = 'l2', # L1 or L2
     noise_mix_ratio = None
-)
+).to("mps")#.cuda()
 
 if __name__ == '__main__':
     ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=50, learning_rate=3e-5, results_folder='results/demultiple0722a-oop')
