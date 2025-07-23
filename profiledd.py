@@ -7,8 +7,8 @@ from PIL import Image
 from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
+from accelerate import Accelerator
 from torch.optim import Adam
-from torch.amp import GradScaler, autocast
 from scipy.signal import butter, filtfilt, decimate, resample
 
 
@@ -566,8 +566,11 @@ class Profiles(np.ndarray):
         def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
-            device = str(next(ddpm.parameters()).device)
-            scaler = GradScaler(enabled = enable_amp)
+
+            # Initialize accelerator
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            device = accelerator.device
+
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
             ema = ModelEmaV2(ddpm, ema_decay, device)
 
@@ -582,58 +585,71 @@ class Profiles(np.ndarray):
                 load_epoch = 0
 
             # Prepare for distributed training
+            ddpm, optimizer = accelerator.prepare(ddpm, optimizer)
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            dl = accelerator.prepare(dl)
 
             for n in range(load_epoch+1, num_epochs+1):
-
                 total_loss = 0
                 count = 0
-                loop = tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch))
+                if accelerator.is_main_process:
+                    loop = tqdm(dl, total=len(dl)*(num_epochs-load_epoch), desc=f"Training DDPM @ Epoch {n}", initial=len(dl)*(n-1-load_epoch))
+                else: loop = dl
                 
                 for d, gt in loop:
                     count += 1
-                    with autocast(device): 
-                        # Forward pass
-                        loss = ddpm(d.to(device), gt.to(device))
-                        loss = loss / gradient_accumulate_every
+                    
+                    # Forward pass
+                    loss = ddpm(d, gt)
+                    loss = loss / gradient_accumulate_every
 
-                        # Check for NaN loss
-                        if torch.isnan(loss):
+                    # Check for NaN loss
+                    if torch.isnan(loss):
+                        if accelerator.is_main_process:
                             tqdm.write('Warning: NaN loss encountered, skipping update.')
-                            count -= 1
-                            continue
-                        
-                        # Backward pass
-                        scaler.scale(loss).backward()
+                        count -= 1
+                        continue
+                    
+                    # Backward pass
+                    accelerator.backward(loss)
 
                     if count % gradient_accumulate_every == 0:
                         total_loss += loss.item() * gradient_accumulate_every
-                        tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
+                        if accelerator.is_main_process:
+                            tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
                         
-                        scaler.step(optimizer)
-                        scaler.update()
+                        optimizer.step()
                         optimizer.zero_grad()
                         if n > pre_ema_epoch: ema.update(ddpm)
 
-                print(f'Epoch {n}: {total_loss/count}')
+                if accelerator.is_main_process:
+                    print(f'Epoch {n}: {(total_loss/count):.4e}')
 
-                if (n+1 % save_every == 0) or (n+1 == num_epochs):
-                    milestone = n+1 // save_every if n+1 < num_epochs else 'final'
-                    info = {
-                        'epoch': n,
-                        # 'model': ddpm.state_dict(),
-                        'model': ema.module.state_dict(),
-                        'ema': ema.state_dict(),
-                        'optimizer': optimizer.state_dict()
-                    }
-                    torch.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
+                    # if n > pre_ema_epoch:
+                    #     ema.apply_shadow()
+                    #     ema.restore()
 
-            print('training completed')
+                    if (n % save_every == 0) or (n == num_epochs):
+                        milestone = n // save_every if n < num_epochs else 'final'
+                        info = {
+                            'epoch': n,
+                            # 'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            'model': accelerator.unwrap_model(ema.module).state_dict(),
+                            'ema': ema.state_dict(),
+                            'optimizer': optimizer.state_dict()
+                        }
+                        accelerator.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
 
-        def validate(self, ddpm, batch_size=32, enable_amp=True, gradient_accumulate_every=2, load_from=None):
+            if accelerator.is_main_process:
+                print('training completed')
+
+        def validate(self, ddpm, batch_size=32, enable_amp=True, gradient_accumulate_every=2, load_from=None, torch_device='cuda'):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be evaluated with Fragment with no appointed target data')
             if load_from is None: raise Exception('Model cannot be evaluated without specified parameters to load')
-            device = str(next(ddpm.parameters()).device)
+
+            # Initialize accelerator
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            device = accelerator.device
 
             # Initialize model with loaded data
             load_model = torch.load(str(load_from), map_location=device)
@@ -642,29 +658,36 @@ class Profiles(np.ndarray):
 
             # Prepare for distributed training
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            ddpm, dl = accelerator.prepare(ddpm, dl)
 
             for n in range(load_epoch, load_epoch+1):
                 total_loss = 0
                 count = 0
-                loop = tqdm(dl, total=len(dl), desc=f"Evaluating DDPM @ Epoch {n}")
-
+                if accelerator.is_main_process:
+                    loop = tqdm(dl, total=len(dl), desc=f"Evaluating DDPM @ Epoch {n}")
+                else: loop = dl
+                
                 for d, gt in loop:
                     count += 1
                     
                     # Forward pass
-                    loss = ddpm(d.to(device), gt.to(device))
+                    loss = ddpm(d, gt)
                     loss = loss / gradient_accumulate_every
 
                     # Check for NaN loss
                     if torch.isnan(loss):
-                        tqdm.write('Warning: NaN loss encountered, skipping validation.')
+                        if accelerator.is_main_process:
+                            tqdm.write('Warning: NaN loss encountered, skipping validation.')
                         count -= 1
                         continue
 
                     if count % gradient_accumulate_every == 0:
                         total_loss += loss.item() * gradient_accumulate_every
-                        # tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
+                        # if accelerator.is_main_process:
+                        #     tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
 
-                print(f'Epoch {n}: {(total_loss/count):.4e}')
+                if accelerator.is_main_process:
+                    print(f'Epoch {n}: {(total_loss/count):.4e}')
 
-            print('validation completed')
+            if accelerator.is_main_process:
+                print('validation completed')
