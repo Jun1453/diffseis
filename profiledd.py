@@ -229,7 +229,7 @@ class Profiles(np.ndarray):
 
         # Diversity stack
         stacked = np.zeros_like(self)
-        noise = np.ones((self.shape[0],self.shape[2])) * float(np.median(np.sqrt((np.ravel(self[:,:20,:]**2)))))
+        noise = np.ones((self.shape[0],self.shape[2])) * float(np.median(np.sqrt((np.ravel(self[:,:50,:]**2)))))
         for j in range(self.shape[2]):
             for i in range(self.shape[0]):
                 start = int(self.sampling_rate*abs(self.offsets[i][j])/self.reduction_vel)
@@ -247,19 +247,42 @@ class Profiles(np.ndarray):
                     if False:
                         central_stns = int(8.0/(self.offsets[i][1]-self.offsets[i][0]))
                         if j<central_stns:
-                            noise[i,j] = np.sqrt(np.mean(self[i,:20,j+central_stns]**2))
+                            noise[i,j] = np.sqrt(np.mean(self[i,:50,j+central_stns]**2))
                         else:
-                            noise[i,j] = np.sqrt(np.mean(self[i,:20,j-central_stns]**2))
+                            noise[i,j] = np.sqrt(np.mean(self[i,:50,j-central_stns]**2))
                     else:
-                        noise[i,j] = np.sqrt(np.mean(self[i,:20,j]**2))
+                        noise[i,j] = np.sqrt(np.mean(self[i,:50,j]**2))
                         # noise[i,j] = 1.
                         pass
-                
-                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) * (1/stacked.shape[0]) #if (normalize_to_profile_num) or (normalize_to_one) else 1)
-                # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
-            if normalize_to_original_level: stacked[:,:,j] = stacked[:,:,j] / np.mean(1/noise[:,j]) 
+        
+                stacked[i,:,j] = self[i,:,j] * (1/noise[i,j])
+            # stacked[:,:,j] = stacked[:,:,j] / np.sum(1/noise[:,j])
+        # # normalize by noise
+        # sorted_noise = np.sort(noise.flatten())
+        # bottom_50_percent = sorted_noise[:int(len(sorted_noise) * 0.50)]
+        # noise_std = np.std(bottom_50_percent)
+        # noise_mean = np.mean(noise)
+        # for j in range(self.shape[2]):
+        #     for i in range(self.shape[0]):
+        #         # stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) #* (1/stacked.shape[0]) #if (normalize_to_profile_num) or (normalize_to_one) else 1)
+        #         # stacked[i,:,j] = self[i,:,j] * ((1/noise[i,j]) / max(0.1, np.sum(1/noise[:,j])))
+        #         stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) / np.maximum(self.shape[0]/noise_mean, np.sum(1/noise[:,j]))
+        #         # stacked[i,:,j] = self[i,:,j] * (1/noise[i,j]) / np.sum(1/noise[:,j])
+        #         # if normalize_to_original_level: stacked[:,:,j] = stacked[:,:,j] / np.mean(1/noise[:,j]) 
+        # # if normalize_to_original_level: stacked[:,:,:] = stacked[:,:,:] / np.median(1/noise[:,:]) 
+        # # for j in range(self.shape[2]):
+        # #     stacked[:,:,j] = stacked[:,:,j] / np.sum(1/noise[:,j])
+
+        # normalize by signal
+        for j in range(self.shape[2]):
+            signal_sum = np.sum([np.sqrt(np.mean(stacked[k,:,j]**2)) for k in range(stacked.shape[0])])
+            for i in range(self.shape[0]):
+                signal_ratio = np.sqrt(np.mean(stacked[i,:,j]**2)) / signal_sum
+                stacked[i,:,j] = stacked[i,:,j] * signal_ratio
+                if j ==0: print(i, signal_ratio)
         stacked = np.sum(stacked, axis=0)
 
+        # stacked = np.mean(stacked, axis=0)
         if first_arrival_reference is None:
             first_arrival_reference = [first_arrival_reference] * len(self.offsets[0])
 
@@ -327,6 +350,13 @@ class Profiles(np.ndarray):
                 self[i,:,j] *= func(self.offsets[i][j])
         return self
 
+    def reshape_from_2d(self):
+        if len(self.shape) == 2:
+            self = self.reshape(1, *self.shape)
+            self.offsets= [self.offsets]
+            self.first_arrival_reference = [self.first_arrival_reference]
+        return self
+
     def plot(self, figsize=None, cmap='seismic', vmin=-1, vmax=1, tmax=None, label_offset=True, plot_reference_arrival=False):
         """Generate subplots for each profile along dimension 0
         
@@ -336,6 +366,8 @@ class Profiles(np.ndarray):
             Figure size in inches (width, height)
         """
         import matplotlib.pyplot as plt
+
+        self = self.reshape_from_2d()
         
         n_profiles = self.shape[0]
         if figsize is None: figsize = (6,0.5+self.shape[0]*1.5) 
@@ -413,6 +445,7 @@ class Profiles(np.ndarray):
 
     def fragmentize(self, vclip=50, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
         """return iterable dataset of 2-d array fragments for pytorch dataloader"""
+        self = self.reshape_from_2d()
         if (tmin is None) and (tmax is None) and (t_interval is None):
             time_crop = None
         else:
