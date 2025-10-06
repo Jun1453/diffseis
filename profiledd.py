@@ -236,9 +236,9 @@ class Profiles(np.ndarray):
                 if first_arrival_reference is not None:
                     end = start+int(first_arrival_reference[min(j,len(first_arrival_reference)-1)])-25
                 else:
-                    end = start+250
+                    end = start+225
                     
-                if (abs(self.offsets[i][j]) > 6) or ((abs(self.offsets[i][j]) > 2.65) and (end<start+275+(125*max(np.amin(10+self.offsets[i])/-40,1)))):
+                if (abs(self.offsets[i][j]) > 6) or ((abs(self.offsets[i][j]) > 3) and (end<start+275+(125*max(np.amin(10+self.offsets[i])/-40,1)))):
                     # noise[i,j] = np.mean(np.abs(self[i,start:end,j]))
                     noise[i,j] = np.sqrt(np.mean(self[i,start:end,j]**2))
                 else:
@@ -307,6 +307,14 @@ class Profiles(np.ndarray):
                          first_arrival_reference=self.first_arrival_reference,
                          sampling_rate=self.sampling_rate,
                          filter_history=self.filter_history + [filter_func],
+                         reduction_vel=self.reduction_vel,
+                         offsets=self.offsets)
+
+    def resample(self, new_sampling_rate):
+        return type(self)(resample(self, int(self.shape[1]*new_sampling_rate/self.sampling_rate), axis=1),
+                         first_arrival_reference=self.first_arrival_reference,
+                         sampling_rate=new_sampling_rate,
+                         filter_history=self.filter_history + (self.resample, new_sampling_rate),
                          reduction_vel=self.reduction_vel,
                          offsets=self.offsets)
     
