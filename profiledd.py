@@ -8,7 +8,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
 from accelerate import Accelerator
-from torch.optim import Adam
+from torch.optim import Adam, lr_scheduler
 from scipy.signal import butter, filtfilt, decimate, resample
 
 
@@ -596,7 +596,7 @@ class Profiles(np.ndarray):
 
             return results
         
-        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None):
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, max_grad_norm=0.01, save_every=None, results_folder='.', load_from=None):
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
 
@@ -605,6 +605,7 @@ class Profiles(np.ndarray):
             device = accelerator.device
 
             optimizer = Adam(ddpm.parameters(), lr=learning_rate)
+            # scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
             ema = ModelEmaV2(ddpm, ema_decay, device)
 
             # Initialize model with loaded data
@@ -618,6 +619,7 @@ class Profiles(np.ndarray):
                 load_epoch = 0
 
             # Prepare for distributed training
+            # ddpm, optimizer, scheduler = accelerator.prepare(ddpm, optimizer, scheduler)
             ddpm, optimizer = accelerator.prepare(ddpm, optimizer)
             dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
             dl = accelerator.prepare(dl)
@@ -640,6 +642,7 @@ class Profiles(np.ndarray):
                     if torch.isnan(loss):
                         if accelerator.is_main_process:
                             tqdm.write('Warning: NaN loss encountered, skipping update.')
+                            raise Exception()
                         count -= 1
                         continue
                     
@@ -651,6 +654,8 @@ class Profiles(np.ndarray):
                         if accelerator.is_main_process:
                             tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
                         
+                        # Apply gradient clipping before optimizer step
+                        # accelerator.clip_grad_norm_(ddpm.parameters(), max_grad_norm)
                         optimizer.step()
                         optimizer.zero_grad()
                         if n > pre_ema_epoch: ema.update(ddpm)
@@ -666,12 +671,13 @@ class Profiles(np.ndarray):
                         milestone = n // save_every if n < num_epochs else 'final'
                         info = {
                             'epoch': n,
-                            # 'model': accelerator.unwrap_model(ddpm).state_dict(),
-                            'model': accelerator.unwrap_model(ema.module).state_dict(),
+                            'model': accelerator.unwrap_model(ddpm).state_dict(),
+                            # 'model': accelerator.unwrap_model(ema.module).state_dict(),
                             'ema': ema.state_dict(),
                             'optimizer': optimizer.state_dict()
                         }
                         accelerator.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
+                # scheduler.step()
 
             if accelerator.is_main_process:
                 print('training completed')

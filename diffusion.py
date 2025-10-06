@@ -99,13 +99,32 @@ def default(val, d):
     return d() if isfunction(d) else d
 
 class CrossSigmoidLoss(nn.Module):
-    def __init__(self, critical=0, width=0.33, reduction='mean'):
+    def __init__(self, critical=0, width=0.33, reduction='mean', mix_l1=0):
         super().__init__()
-        self.sigmoid = lambda x: 1 / (1 + torch.exp(-(x-critical)/width))
+        # self.sigmoid = lambda x: 1 / (1 + torch.exp(-(x-critical)/width))
+        self.sigmoid = lambda x: torch.sigmoid((x-critical)/width)-0.5+0.5*torch.log(x+1)
         self.reduction = reduction
+        self.mix_l1 = mix_l1
+        self.width = width
     def forward(self, input, target):
-        # l = torch.sqrt(torch.abs(self.sigmoid(input) - self.sigmoid(target)))
-        l = torch.abs(self.sigmoid(input) - self.sigmoid(target))
+        # l1_func = nn.L1Loss(reduction=self.reduction)
+        # # loss_func = nn.SmoothL1Loss(reduction=self.reduction)
+        # # l = torch.sqrt(torch.abs(self.sigmoid(input) - self.sigmoid(target))
+        # loss = l1_func(self.sigmoid(input),self.sigmoid(target))
+        # if self.mix_l1: loss += self.mix_l1 * l1_func(input, target)
+        # return loss
+        l1_func = nn.L1Loss(reduction='none')
+        l2_func = nn.MSELoss(reduction='none')
+        # l = torch.abs(self.sigmoid(input-target)-0.5) + 0.2 * l1_func(input, target)
+        # l = torch.abs(self.sigmoid(input) - self.sigmoid(target))
+        # l = torch.log(torch.abs(input-target)+1) # for log test
+        # l = self.sigmoid(torch.abs(input-target))
+        # np.abs(sigmoid_np(X) - sigmoid_np(Y)) + np.log(((X-Y)**2)+1)*.2
+        # l = l1_func(torch.sigmoid(input/self.width), torch.sigmoid(target/self.width)) + 0.2*torch.log(1+l2_func(input, target)) #0728-csmixlog
+        # sigmoid(l2_func(input/0.33,target/0.33))-0.5 + 0.5*l1_func(sigmoid(input/self.width), sigmoid(target/self.width)) + 0.2*log(1+l2_func(input/self.width, target/self.width))
+        # l = torch.sigmoid(l2_func(input/self.width, target/self.width))-0.5 + 0.5*l1_func(torch.sigmoid(input/self.width), torch.sigmoid(target/self.width)) + 0.2*torch.log(1+l2_func(input/self.width, target/self.width)) #csmix3
+        # l = torch.sigmoid(l2_func(input/self.width, target/self.width))-0.5 + 0.2*torch.log(1+l2_func(input/self.width, target/self.width)) #csl2log
+        l = torch.sigmoid(l2_func(input/self.width, target/self.width))-0.5 + 0.2*l2_func(torch.sigmoid(input/self.width), torch.sigmoid(target/self.width)) + 0.2*torch.log(1+l2_func(input/self.width, target/self.width)) #0729-csmixlog
         if   self.reduction == 'none':
             return l
         elif self.reduction == 'sum':
@@ -135,22 +154,22 @@ class GaussianDiffusion(nn.Module):
         self.noise_mix_ratio = noise_mix_ratio
         
         if loss_type == 'l1':
-            self.loss_func = nn.L1Loss(reduction='mean')
+            self.loss_func = nn.L1Loss(reduction='sum')
         elif loss_type == 'l2':
-            self.loss_func = nn.MSELoss(reduction='mean')
+            self.loss_func = nn.MSELoss(reduction='sum')
         elif loss_type == 'l1l2':
             class L1L2Loss(nn.Module):
                 def __init__(self):
                     super().__init__()
-                    self.l1 = nn.L1Loss(reduction='mean')
-                    self.l2 = nn.MSELoss(reduction='mean')
+                    self.l1 = nn.L1Loss(reduction='sum')
+                    self.l2 = nn.MSELoss(reduction='sum')
                 def forward(self, input, target):
                     return 0.5 * (self.l1(input, target) + self.l2(input, target))
             self.loss_func = L1L2Loss()
         elif re.match(r'cross-sigmoid', loss_type):
             if loss_type == 'cross-sigmoid': reduction = 'none'
             else: reduction = loss_type.rsplit('-', 1)[1]
-            self.loss_func = CrossSigmoidLoss(reduction=reduction)
+            self.loss_func = CrossSigmoidLoss(reduction=reduction, mix_l1=0.2)
         else:
             raise NotImplementedError()
 
