@@ -279,7 +279,7 @@ class Profiles(np.ndarray):
             for i in range(self.shape[0]):
                 signal_ratio = np.sqrt(np.mean(stacked[i,:,j]**2)) / signal_sum
                 stacked[i,:,j] = stacked[i,:,j] * signal_ratio
-                if j ==0: print(i, signal_ratio)
+                # if j ==0: print(i, signal_ratio)
         stacked = np.sum(stacked, axis=0)
 
         # stacked = np.mean(stacked, axis=0)
@@ -310,11 +310,12 @@ class Profiles(np.ndarray):
                          reduction_vel=self.reduction_vel,
                          offsets=self.offsets)
 
-    def resample(self, new_sampling_rate):
-        return type(self)(resample(self, int(self.shape[1]*new_sampling_rate/self.sampling_rate), axis=1),
+    def resample(self, resample_func):
+        new_data, new_sampling_rate = resample_func(self)
+        return type(self)(new_data,
                          first_arrival_reference=self.first_arrival_reference,
                          sampling_rate=new_sampling_rate,
-                         filter_history=self.filter_history + (self.resample, new_sampling_rate),
+                         filter_history=self.filter_history + [resample_func],
                          reduction_vel=self.reduction_vel,
                          offsets=self.offsets)
     
@@ -501,10 +502,26 @@ class Profiles(np.ndarray):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
         
         def __getitem__(self, key):
-            if hasattr(self, 'ground_truth'):
-                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
+            if hasattr(self, 'trace_mute_ratio') and self.trace_mute_ratio > 0:
+                selected = self.fragments[key].copy()
+                if len(selected.shape) == 3:
+                    for i in range(selected.shape[0]):
+                        for j in range(selected.shape[1]):
+                            if np.random.rand() < self.trace_mute_ratio:
+                                selected[i,j,:] *= np.random.rand()/100
+                elif len(selected.shape) == 2: 
+                    for j in range(selected.shape[0]):
+                        if np.random.rand() < self.trace_mute_ratio:
+                            selected[j,:] *= np.random.rand()/100
+                else:
+                    selected = self.fragments[key]
             else:
-                return torch.from_numpy(np.float32(self.fragments[key])).unsqueeze(dim=0)
+                selected = self.fragments[key]
+
+            if hasattr(self, 'ground_truth'):
+                return torch.from_numpy(np.float32(selected)).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
+            else:
+                return torch.from_numpy(np.float32(selected)).unsqueeze(dim=0)
         
         def __setitem__(self, key, value):
             self.fragments[key] = value
@@ -604,7 +621,8 @@ class Profiles(np.ndarray):
 
             return results
         
-        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, max_grad_norm=0.01, save_every=None, results_folder='.', load_from=None):
+        def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, max_grad_norm=0.01, save_every=None, results_folder='.', load_from=None, trace_mute_ratio=0):
+            self.trace_mute_ratio = trace_mute_ratio
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
 

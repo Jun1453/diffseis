@@ -164,7 +164,7 @@ class GaussianDiffusion(nn.Module):
                     self.l1 = nn.L1Loss(reduction='sum')
                     self.l2 = nn.MSELoss(reduction='sum')
                 def forward(self, input, target):
-                    return 0.5 * (self.l1(input, target) + self.l2(input, target))
+                    return 0.9 * (self.l1(input, target) + 0.1 * self.l2(input, target))
             self.loss_func = L1L2Loss()
         elif re.match(r'cross-sigmoid', loss_type):
             if loss_type == 'cross-sigmoid': reduction = 'none'

@@ -18,17 +18,22 @@ for key, value in stn_num_to_n.items():
 
     # load segy files and preprocess the record section
     pf = Profiles.load(f'noto/OBS/NT24OBS_J{key}C-1.sgy', jamstec_handler)
+    pf = Profiles.concatenate([pf[n:n+1]/np.median((np.ravel(np.abs(pf[n,:50,:])))) for n in range(5)])
     pf = pf.filter(myfilter).reduction(6.0)[:,:6000,:]
     
     # load pre-calculated arrival curve and correlate time series origin
-    arrival = fit_curves[f'{key}'] + pf.sampling_rate*0.5
+    arrival = fit_curves[f'{key}'] + pf.sampling_rate*0.5 - 75
     padded_arrival = np.pad(arrival, (0,pf.shape[2]-len(arrival)), mode='edge')
+    # padded_arrival = None
 
     # apply diversity stacking
     pf_stack3 =   pf[1:4].diversity_stack(orig_profile_num=True, first_arrival_reference=padded_arrival)
     pf_stack2 = pf[0:5:4].diversity_stack(orig_profile_num=True, first_arrival_reference=np.flip(padded_arrival))
     pf_stack_all = Profiles.concatenate((pf_stack2[0:1],pf_stack3,pf_stack2[1:2]))
-    norm_pf = Profiles.concatenate([pf[n:n+1].diversity_stack(orig_profile_num=True) for n in range(5)])
+    # norm_pf = Profiles.concatenate([pf[n:n+1].diversity_stack(orig_profile_num=True) for n in range(5)])
+    # norm_pf = Profiles.concatenate([pf[n:n+1]/np.median(np.sqrt((np.ravel(pf[n:n+1,:20,:]**2))))for n in range(5)])
+    norm_pf = pf[:]
+
     # append new section to existing data
     if profiles_target is None:
         #profiles_data = pf
@@ -40,8 +45,8 @@ for key, value in stn_num_to_n.items():
         profiles_target = Profiles.concatenate((profiles_target, pf_stack_all))
 
 # generate pytorch dataset with fragmentized record section
-ds_gt = profiles_target.fragmentize(vclip=25, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
-ds_data = profiles_data.fragmentize(vclip=25, tmin=0, t_interval=3.57, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_gt = profiles_target.fragmentize(vclip=20, tmin=0, t_interval=3.7, x_move_ratio=0.2, y_move_ratio=0.2)
+ds_data = profiles_data.fragmentize(vclip=20, tmin=0, t_interval=3.7, x_move_ratio=0.2, y_move_ratio=0.2)
 ds_data.set_ground_truth(ds_gt)
 del profiles_data
 del profiles_target
@@ -62,9 +67,11 @@ diffusion = GaussianDiffusion(
     channels = 1,
     image_size = ds_data.unit_size,
     timesteps = 2000,
-    loss_type = 'cross-sigmoid-mean', # L1 or L2
+    # loss_type = 'l2', # L1 or L2
+    loss_type = 'l1l2', # L1 or L2
+    # loss_type = 'cross-sigmoid-sum', # L1 or L2
     noise_mix_ratio = None
 )
 
 if __name__ == '__main__':
-    ds_data.train(diffusion, 200, 32, gradient_accumulate_every=2, save_every=25, learning_rate=3e-5, results_folder='results/demultiple0723-oop')
+    ds_data.train(diffusion, 300, 32, gradient_accumulate_every=2, save_every=10, learning_rate=3e-5, results_folder='results/demultiple1024-l1l2', trace_mute_ratio=0.1)
