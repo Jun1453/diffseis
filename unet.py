@@ -94,8 +94,11 @@ class Block(nn.Module):
 class ResnetBlock(nn.Module):
     def __init__(self, dim, dim_out, noise_level_emb_dim=None, dropout=0, use_affine_level=False, norm_groups=32):
         super().__init__()
-        self.noise_func = FeatureWiseAffine(
-            noise_level_emb_dim, dim_out, use_affine_level)
+        if noise_level_emb_dim is not None:
+            self.noise_func = FeatureWiseAffine(
+                noise_level_emb_dim, dim_out, use_affine_level)
+        else:
+            self.noise_func = None
 
         self.block1 = Block(dim, dim_out, groups=norm_groups)
         self.block2 = Block(dim_out, dim_out, groups=norm_groups, dropout=dropout)
@@ -103,9 +106,9 @@ class ResnetBlock(nn.Module):
             dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb):
-        b, c, h, w = x.shape
         h = self.block1(x)
-        h = self.noise_func(h, time_emb)
+        if self.noise_func is not None:
+            h = self.noise_func(h, time_emb)
         h = self.block2(h)
         return h + self.res_conv(x)
 

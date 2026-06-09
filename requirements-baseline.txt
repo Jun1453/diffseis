@@ -1,0 +1,19 @@
+# DeepDenoiser baseline — SEPARATE conda env (see environment-baseline.yml).
+# Not compatible with Python 3.13 or TensorFlow >= 2.16 (Keras 3 breaks tf.compat.v1.layers).
+
+numpy>=1.23,<2.3
+scipy>=1.9
+matplotlib>=3.5
+pandas>=1.5
+tqdm>=4.60
+segyio>=1.9
+pillow>=9.0
+
+# TF 2.15 + Keras 2 (required for tf.compat.v1.keras in DeepDenoiser model.py)
+tensorflow==2.15.1
+keras>=2.13,<3
+
+# GPU: install BOTH; do NOT export TF_USE_LEGACY_KERAS=1 on TF 2.15:
+#   pip uninstall -y tensorflow keras tf-keras
+#   pip install "tensorflow[and-cuda]==2.15.1" "keras>=2.13,<3"
+#   unset TF_USE_LEGACY_KERAS

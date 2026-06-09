@@ -1,0 +1,3 @@
+[submodule "external/DeepDenoiser"]
+	path = external/DeepDenoiser
+	url = https://github.com/AI4EPS/DeepDenoiser.git

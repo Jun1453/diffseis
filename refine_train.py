@@ -14,6 +14,24 @@ stn_num_to_n = {
     '36': 40, '37': 35, '38': 70, '39': 25, '40': 60 
 }
 
+def first_arrival_curve_raw(data):
+    """Raw AIC argmin pick (samples) per trace, no outlier filtering."""
+    return np.array([aic_simple(data[:1750, i]).argmin() for i in range(data.shape[1])], dtype=float)
+
+
+def interp_nan(curve):
+    """Linearly interpolate NaN / None entries in a 1D pick curve."""
+    arr = np.asarray(curve, dtype=float)
+    nan_mask = ~np.isfinite(arr)
+    if not np.any(nan_mask):
+        return arr
+    if np.all(nan_mask):
+        return arr
+    x = np.arange(len(arr))
+    arr[nan_mask] = np.interp(x[nan_mask], x[~nan_mask], arr[~nan_mask])
+    return arr
+
+
 def first_arrival_curve(data):
     p_picks = []
     for i in range(data.shape[1]):

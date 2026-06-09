@@ -1,0 +1,28 @@
+# Conda env for C1 DeepDenoiser (Python 3.11 + TensorFlow 2.15 / Keras 2).
+#
+#   conda env create -f environment-baseline.yml
+#   conda activate diffseis-baseline
+#
+# GPU (recommended): after create,
+#   pip uninstall -y tensorflow keras
+#   pip install "tensorflow[and-cuda]==2.15.1"
+#
+# Verify GPU:
+#   python -c "import tensorflow as tf; print(tf.__version__); print(tf.config.list_physical_devices('GPU'))"
+
+name: diffseis-baseline
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy>=1.23,<2.3
+  - scipy
+  - matplotlib
+  - pandas
+  - tqdm
+  - segyio
+  - pillow
+  - pip:
+      - tensorflow==2.15.1
+      - "keras>=2.13,<3"

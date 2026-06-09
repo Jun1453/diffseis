@@ -1,15 +1,38 @@
-import torch
-import torch.nn as nn
-import torch.utils.data as data
+import pickle
 import numpy as np
 import segyio
 from PIL import Image
 from tqdm import tqdm
 from copy import deepcopy
 from pathlib import Path
-from accelerate import Accelerator
-from torch.optim import Adam, lr_scheduler
 from scipy.signal import butter, filtfilt, decimate, resample
+
+# PyTorch is optional so DeepDenoiser can run in a TensorFlow-only env (baseline/rebuild_deepdenoiser.py).
+try:
+    import torch
+    import torch.nn as nn
+    import torch.utils.data as data
+    from accelerate import Accelerator
+    from torch.optim import Adam, lr_scheduler
+    HAS_TORCH = True
+    _FragmentBase = data.Dataset
+except ImportError:
+    torch = None
+    nn = None
+    data = None
+    Accelerator = None
+    Adam = None
+    lr_scheduler = None
+    HAS_TORCH = False
+    _FragmentBase = object
+
+
+def _require_torch(feature="this operation"):
+    if not HAS_TORCH:
+        raise ImportError(
+            f"{feature} requires PyTorch. Install torch in this env, or run DeepDenoiser "
+            "from diffseis-baseline without DDPM training/inference."
+        )
 
 
 def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 4):
@@ -51,43 +74,50 @@ def jamstec_handler(f):
         padded_offsets.append(padded_offset)
     return padded_raws, padded_offsets
 
-class ModelEmaV2(nn.Module):
-    def __init__(self, model, decay=0.9999, device=None):
-        super(ModelEmaV2, self).__init__()
-        self.module = deepcopy(model)
-        self.module.eval()
-        self.decay = decay
-        self.device = device
-        if self.device is not None:
-            self.module.to(device=device)
-        self.backup = {}
 
-    def _update(self, model, update_fn):
-        with torch.no_grad():
-            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
-                if self.device is not None:
-                    model_v = model_v.to(device=self.device)
-                ema_v.copy_(update_fn(ema_v, model_v))
+if HAS_TORCH:
 
-    def update(self, model):
-        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+    class ModelEmaV2(nn.Module):
+        def __init__(self, model, decay=0.9999, device=None):
+            super(ModelEmaV2, self).__init__()
+            self.module = deepcopy(model)
+            self.module.eval()
+            self.decay = decay
+            self.device = device
+            if self.device is not None:
+                self.module.to(device=device)
+            self.backup = {}
 
-    def set(self, model):
-        self._update(model, update_fn=lambda e, m: m)
+        def _update(self, model, update_fn):
+            with torch.no_grad():
+                for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                    if self.device is not None:
+                        model_v = model_v.to(device=self.device)
+                    ema_v.copy_(update_fn(ema_v, model_v))
 
-    def apply_shadow(self):
-        """Save current model parameters and replace them with EMA parameters."""
-        self.backup = {name: param.data.clone() for name, param in self.module.state_dict().items()}
-        for name, param in self.module.named_parameters():
-            if param.requires_grad:
-                param.data.copy_(self.module.state_dict()[name])
+        def update(self, model):
+            self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
 
-    def restore(self):
-        """Restore the original model parameters."""
-        for name, param in self.module.named_parameters():
-            if param.requires_grad:
-                param.data.copy_(self.backup[name])
-        self.backup = {}
+        def set(self, model):
+            self._update(model, update_fn=lambda e, m: m)
+
+        def apply_shadow(self):
+            """Save current model parameters and replace them with EMA parameters."""
+            self.backup = {name: param.data.clone() for name, param in self.module.state_dict().items()}
+            for name, param in self.module.named_parameters():
+                if param.requires_grad:
+                    param.data.copy_(self.module.state_dict()[name])
+
+        def restore(self):
+            """Restore the original model parameters."""
+            for name, param in self.module.named_parameters():
+                if param.requires_grad:
+                    param.data.copy_(self.backup[name])
+            self.backup = {}
+
+else:
+    ModelEmaV2 = None  # type: ignore
+
 
 class Profiles(np.ndarray):
     def __new__(cls, input_array, sampling_rate=None, filter_history=None, reduction_vel=None, offsets=None, first_arrival_reference=None):
@@ -323,25 +353,66 @@ class Profiles(np.ndarray):
         self.reduction_vel = reduction_vel
         return self
 
+    @staticmethod
+    def _filter_history_for_save(filter_history):
+        """Convert filter callables to pickle-safe metadata for np.savez."""
+        if not filter_history:
+            return np.array([], dtype=object)
+        serial = []
+        for item in filter_history:
+            if callable(item):
+                func = getattr(item, "func", item)
+                name = getattr(func, "__name__", "callable")
+                serial.append(f"callable:{name}")
+            else:
+                serial.append(item)
+        return np.array(serial, dtype=object)
+
+    @staticmethod
+    def _filter_history_from_load(raw_history) -> list:
+        """Restore filter_history from npz; tolerate legacy pickled callables."""
+        out = []
+        for item in np.atleast_1d(raw_history).tolist():
+            if isinstance(item, str):
+                out.append(item)
+            elif callable(item):
+                func = getattr(item, "func", item)
+                name = getattr(func, "__name__", "callable")
+                out.append(f"callable:{name}")
+            else:
+                out.append(item)
+        return out
+
+    @staticmethod
+    def _load_filter_history(npzfile) -> list:
+        if "filter_history" not in npzfile.files:
+            return []
+        try:
+            return Profiles._filter_history_from_load(npzfile["filter_history"])
+        except (AttributeError, ModuleNotFoundError, pickle.UnpicklingError):
+            return []
+
     def write(self, filename):
         """Save Profiles instance to file"""
         np.savez(filename, 
                  data=self,
                  first_arrival_reference=self.first_arrival_reference,
                  sampling_rate=self.sampling_rate,
-                 filter_history=self.filter_history,
+                 filter_history=self._filter_history_for_save(self.filter_history),
                  reduction_vel=self.reduction_vel,
                  offsets=self.offsets)
     @classmethod 
     def read(cls, filename, allow_pickle=True):
         """Read Profiles instance from file"""
-        npzfile = np.load(filename, allow_pickle=allow_pickle)
-        return cls(npzfile['data'],
-                  sampling_rate=npzfile['sampling_rate'].item(),
-                  filter_history=list(npzfile['filter_history']),
-                  reduction_vel=npzfile['reduction_vel'].item(),
-                  offsets=npzfile['offsets'],
-                  first_arrival_reference=npzfile['first_arrival_reference'])
+        with np.load(filename, allow_pickle=allow_pickle) as npzfile:
+            return cls(
+                npzfile["data"],
+                sampling_rate=npzfile["sampling_rate"].item(),
+                filter_history=cls._load_filter_history(npzfile),
+                reduction_vel=npzfile["reduction_vel"].item(),
+                offsets=npzfile["offsets"],
+                first_arrival_reference=npzfile["first_arrival_reference"],
+            )
     
     def get_xyz(self, raw, offset, sample_num=None):
         if sample_num == None:
@@ -364,6 +435,17 @@ class Profiles(np.ndarray):
             self = self.reshape(1, *self.shape)
             self.offsets= [self.offsets]
             self.first_arrival_reference = [self.first_arrival_reference]
+        return self
+
+    def mask(self, mask_array):
+        if mask_array.shape == self.shape[2]:
+            for i in range(self.shape[0]):
+                for j in range(self.shape[2]):
+                        self[i,:,j] *= mask_array[j]
+        elif mask_array.shape != self.shape:
+            raise ValueError("Mask array shape must match Profiles shape")
+        
+        self = self
         return self
 
     def plot(self, figsize=None, cmap='seismic', vmin=-1, vmax=1, tmax=None, label_offset=True, plot_reference_arrival=False):
@@ -452,6 +534,26 @@ class Profiles(np.ndarray):
             initial_count += count
         return initial_count
 
+    def deepdenoiser_tracewise(
+        self,
+        model_dir=None,
+        work_dir="./results/baseline/deepdenoiser_work",
+        sampling_rate=None,
+        n_components=3,
+        batch_size=20,
+    ):
+        """Trace-wise denoising via external DeepDenoiser (1D, no cross-trace context)."""
+        from baseline.deepdenoiser_bridge import denoise_profiles_tracewise
+
+        return denoise_profiles_tracewise(
+            self,
+            work_dir=work_dir,
+            model_dir=model_dir,
+            sampling_rate=sampling_rate,
+            n_components=n_components,
+            batch_size=batch_size,
+        )
+
     def fragmentize(self, vclip=50, tmin=0.5, tmax=None, t_interval=3.04, unit_size=(64,256), x_move_ratio=0.2, y_move_ratio=0.2):
         """return iterable dataset of 2-d array fragments for pytorch dataloader"""
         self = self.reshape_from_2d()
@@ -464,7 +566,7 @@ class Profiles(np.ndarray):
         if vclip is None: vclip = 1
         return self.Fragment(self/vclip, unit_size=unit_size, time_crop=time_crop, x_move=int(unit_size[0]*x_move_ratio), y_move=int(unit_size[1]*y_move_ratio))
     
-    class Fragment(data.Dataset):
+    class Fragment(_FragmentBase):
         def __init__(self, profiles, unit_size: tuple, time_crop, x_move: int, y_move: int):
             self.profiles = profiles
             self.unit_size = unit_size
@@ -496,7 +598,15 @@ class Profiles(np.ndarray):
                         if buffer_start < unit_size[1]:
                             self.fragments[i,j,buffer_start:] = np.zeros((unit_size[1]-buffer_start))
                 else:
-                    self.fragments[i] = self.profiles[num_profile, loc_x_start:loc_x_start+unit_size[0], loc_y_start:loc_y_start+unit_size[1]]
+                    # Handle edge tiles where available time samples are shorter than unit_size[1].
+                    # Keep zero padding in the remainder instead of raising a broadcast error.
+                    crop = self.profiles[
+                        num_profile,
+                        loc_y_start:loc_y_start + unit_size[1],
+                        loc_x_start:loc_x_start + unit_size[0],
+                    ]
+                    for j in range(unit_size[0]):
+                        self.fragments[i, j, :min(self.profiles.shape[1]-loc_y_start,crop.shape[0])] = crop[:,j]
         
         def __len__(self):
             return self.profiles.shape[0] * self.x_tile * self.y_tile
@@ -518,10 +628,15 @@ class Profiles(np.ndarray):
             else:
                 selected = self.fragments[key]
 
-            if hasattr(self, 'ground_truth'):
-                return torch.from_numpy(np.float32(selected)).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
-            else:
+            if HAS_TORCH:
+                if hasattr(self, 'ground_truth'):
+                    return torch.from_numpy(np.float32(selected)).unsqueeze(dim=0), torch.from_numpy(np.float32(self.ground_truth.fragments[key])).unsqueeze(dim=0)
                 return torch.from_numpy(np.float32(selected)).unsqueeze(dim=0)
+            selected = np.float32(selected)
+            if hasattr(self, 'ground_truth'):
+                gt = np.float32(self.ground_truth.fragments[key])
+                return np.expand_dims(selected, 0), np.expand_dims(gt, 0)
+            return np.expand_dims(selected, 0)
         
         def __setitem__(self, key, value):
             self.fragments[key] = value
@@ -564,13 +679,15 @@ class Profiles(np.ndarray):
                         loc_x_end = loc_x_start+self.unit_size[0]
 
                         index = k + j*self.x_tile + i*self.x_tile*self.y_tile
-                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += self[index].numpy()[0].T
+                        patch = np.asarray(self.fragments[index], dtype=np.float32)
+                        rebuilt_profiles[i, loc_y_start:loc_y_end, loc_x_start:loc_x_end] += patch.T
                         weight[loc_y_start:loc_y_end, loc_x_start:loc_x_end] += np.ones((self.unit_size[1], self.unit_size[0]))
                     
             
             return rebuilt_profiles/weight
 
         def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda'):
+            _require_torch("Fragment.denoise (DDPM)")
             if hasattr(self, 'ground_truth'): raise Exception('Fragment with appointed target data cannot be denoised')
             parameters = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)['model']
 
@@ -620,11 +737,116 @@ class Profiles(np.ndarray):
 
 
             return results
+
+        def denoise_direct(self, model, parameter_dir, batch_size=32, device='cuda'):
+            """Single-forward deterministic U-Net (no DDPM sampling)."""
+            _require_torch("Fragment.denoise_direct")
+            if hasattr(self, 'ground_truth'):
+                raise Exception('Fragment with appointed target data cannot be denoised')
+            checkpoint = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)
+            model.load_state_dict(checkpoint['model'])
+            model = model.to(device)
+            model.eval()
+            dl = data.DataLoader(self, batch_size=batch_size, pin_memory=True)
+
+            count = 0
+            results = type(self)(
+                profiles=self.profiles,
+                unit_size=self.unit_size,
+                time_crop=self.time_crop,
+                x_move=self.x_move,
+                y_move=self.y_move,
+            )
+            with torch.no_grad():
+                for input_data in dl:
+                    pred = model(input_data.to(device))
+                    for i in range(len(input_data)):
+                        results[count] = pred[i].cpu().detach()
+                        count += 1
+            return results
+
+        def train_direct(self, model, num_epochs, batch_size=32, learning_rate=3e-5, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, save_every=None, results_folder='.', load_from=None, trace_mute_ratio=0):
+            """Train deterministic DirectDenoiser on (noisy patch, clean patch) pairs."""
+            _require_torch("Fragment.train_direct")
+            self.trace_mute_ratio = trace_mute_ratio
+            if not hasattr(self, 'ground_truth'):
+                raise Exception('Model cannot be trained with Fragment with no appointed target data')
+            if save_every is None:
+                save_every = num_epochs
+            Path(results_folder).mkdir(parents=True, exist_ok=True)
+
+            accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
+            device = accelerator.device
+            optimizer = Adam(model.parameters(), lr=learning_rate)
+            ema = ModelEmaV2(model, ema_decay, device)
+
+            if load_from is not None:
+                load_model = torch.load(str(load_from), map_location=device)
+                load_epoch = load_model['epoch']
+                model.load_state_dict(load_model['model'])
+                ema.load_state_dict(load_model['ema'])
+                optimizer.load_state_dict(load_model['optimizer'])
+            else:
+                load_epoch = 0
+
+            model, optimizer = accelerator.prepare(model, optimizer)
+            dl = data.DataLoader(self, shuffle=True, batch_size=batch_size, pin_memory=True)
+            dl = accelerator.prepare(dl)
+
+            for n in range(load_epoch + 1, num_epochs + 1):
+                total_loss = 0
+                count = 0
+                if accelerator.is_main_process:
+                    loop = tqdm(
+                        dl,
+                        total=len(dl) * (num_epochs - load_epoch),
+                        desc=f"Training Direct U-Net @ Epoch {n}",
+                        initial=len(dl) * (n - 1 - load_epoch),
+                    )
+                else:
+                    loop = dl
+
+                for d, gt in loop:
+                    count += 1
+                    loss = model(d, gt)
+                    loss = loss / gradient_accumulate_every
+                    if torch.isnan(loss):
+                        if accelerator.is_main_process:
+                            tqdm.write('Warning: NaN loss encountered, skipping update.')
+                            raise Exception()
+                        count -= 1
+                        continue
+                    accelerator.backward(loss)
+                    if count % gradient_accumulate_every == 0:
+                        total_loss += loss.item() * gradient_accumulate_every
+                        if accelerator.is_main_process:
+                            tqdm.write(f'Loss: {loss.item():.4e} -> Avg Loss: {(total_loss/count):.4e}')
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        if n > pre_ema_epoch:
+                            ema.update(model)
+
+                if accelerator.is_main_process:
+                    print(f'Epoch {n}: {(total_loss/count):.4e}')
+                    if (n % save_every == 0) or (n == num_epochs):
+                        milestone = n // save_every if n < num_epochs else 'final'
+                        info = {
+                            'epoch': n,
+                            'model': accelerator.unwrap_model(model).state_dict(),
+                            'ema': ema.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                        }
+                        accelerator.save(info, str(Path(results_folder) / f'model-{milestone}.pt'))
+
+            if accelerator.is_main_process:
+                print('training completed')
         
         def train(self, ddpm, num_epochs, batch_size=32, learning_rate=3e-6, enable_amp=True, pre_ema_epoch=5, ema_decay=0.995, gradient_accumulate_every=2, max_grad_norm=0.01, save_every=None, results_folder='.', load_from=None, trace_mute_ratio=0):
+            _require_torch("Fragment.train (DDPM)")
             self.trace_mute_ratio = trace_mute_ratio
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be trained with Fragment with no appointed target data')
             if save_every is None: save_every = num_epochs
+            Path(results_folder).mkdir(parents=True, exist_ok=True)
 
             # Initialize accelerator
             accelerator = Accelerator(mixed_precision='fp16' if enable_amp else 'no')
@@ -709,6 +931,7 @@ class Profiles(np.ndarray):
                 print('training completed')
 
         def validate(self, ddpm, batch_size=32, enable_amp=True, gradient_accumulate_every=2, load_from=None, torch_device='cuda'):
+            _require_torch("Fragment.validate (DDPM)")
             if not hasattr(self, 'ground_truth'): raise Exception('Model cannot be evaluated with Fragment with no appointed target data')
             if load_from is None: raise Exception('Model cannot be evaluated without specified parameters to load')
 
