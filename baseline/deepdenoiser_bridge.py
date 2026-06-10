@@ -201,6 +201,76 @@ def promote_checkpoint_prefix(src_prefix: Path, dest_dir: Path) -> Path:
     return dest_dir / name
 
 
+def iter_finetuned_checkpoint_candidates(
+    search_roots: list[Path],
+) -> list[tuple[int, float, Path]]:
+    """(epoch, mtime, prefix) for checkpoints that differ from pretrained."""
+    pretrained_md5 = _checkpoint_weights_md5(resolve_latest_checkpoint_prefix(DEFAULT_MODEL_DIR))
+    candidates: list[tuple[int, float, Path]] = []
+    for root in search_roots:
+        root = _abs(root)
+        for epoch, mtime, prefix in iter_checkpoint_prefixes(root):
+            digest = _checkpoint_weights_md5(prefix)
+            if digest is None or digest == pretrained_md5:
+                continue
+            candidates.append((epoch, mtime, prefix))
+    return candidates
+
+
+def resolve_best_finetuned_checkpoint(
+    model_dir: Path,
+    search_roots: list[Path] | None = None,
+) -> Path:
+    roots = [_abs(r) for r in (search_roots or [model_dir])]
+    candidates = iter_finetuned_checkpoint_candidates(roots)
+    if not candidates:
+        raise FileNotFoundError(
+            f"No fine-tuned checkpoints (distinct from pretrained) under {roots}. "
+            "Run baseline/train_deepdenoiser.py without --resume first."
+        )
+    return max(candidates, key=lambda x: (x[0], x[1]))[2]
+
+
+def prepare_resume_checkpoint(model_dir: Path) -> Path:
+    """
+    TensorFlow restore only reads model_dir/checkpoint at the root, not timestamp
+    subdirs. Promote the highest-epoch fine-tuned checkpoint there before resuming.
+    """
+    model_dir = _abs(model_dir)
+    best = resolve_best_finetuned_checkpoint(model_dir)
+    pretrained_md5 = _checkpoint_weights_md5(resolve_latest_checkpoint_prefix(DEFAULT_MODEL_DIR))
+    best_md5 = _checkpoint_weights_md5(best)
+    try:
+        root = resolve_latest_checkpoint_prefix(model_dir)
+        root_md5 = _checkpoint_weights_md5(root)
+    except FileNotFoundError:
+        root = None
+        root_md5 = None
+
+    if (
+        root is not None
+        and root_md5 == best_md5
+        and _abs(root).parent == model_dir
+        and root.name == best.name
+    ):
+        print(f"[finetune-resume] restore checkpoint={root} (weights md5={root_md5})")
+        return root
+
+    if root_md5 == pretrained_md5:
+        print(
+            f"[finetune-resume] Root checkpoint still points at pretrained weights; "
+            f"promoting {best.name} from {best.parent}"
+        )
+    promoted = promote_checkpoint_prefix(best, model_dir)
+    digest = _checkpoint_weights_md5(promoted)
+    print(f"[finetune-resume] restore checkpoint={promoted} (weights md5={digest})")
+    if digest == pretrained_md5:
+        raise RuntimeError(
+            f"Resume would restore pretrained weights in {model_dir}, not a fine-tuned checkpoint."
+        )
+    return promoted
+
+
 def promote_latest_trained_checkpoint(
     dest_dir: Path,
     search_roots: list[Path] | None = None,
@@ -211,14 +281,7 @@ def promote_latest_trained_checkpoint(
     """
     dest_dir = _abs(dest_dir)
     roots = [_abs(r) for r in (search_roots or [dest_dir, DEEPDENOISER_CWD / "log"])]
-    pretrained_md5 = _checkpoint_weights_md5(resolve_latest_checkpoint_prefix(DEFAULT_MODEL_DIR))
-    candidates: list[tuple[int, float, Path]] = []
-    for root in roots:
-        for epoch, mtime, prefix in iter_checkpoint_prefixes(root):
-            digest = _checkpoint_weights_md5(prefix)
-            if digest is None or digest == pretrained_md5:
-                continue
-            candidates.append((epoch, mtime, prefix))
+    candidates = iter_finetuned_checkpoint_candidates(roots)
     if not candidates:
         raise FileNotFoundError(
             f"No fine-tuned checkpoints (distinct from pretrained) under {roots}. "
@@ -692,6 +755,22 @@ def export_finetune_npz(profiles_noisy, profiles_clean, work_dir: Path, split_na
     return split_dir / "signal.csv"
 
 
+def _copy_checkpoint_tree(src_dir: Path, dest_dir: Path, *, replace: bool = True) -> None:
+    """Copy TensorFlow checkpoint shards and index from src_dir into dest_dir."""
+    src_dir = _abs(src_dir)
+    dest_dir = _abs(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if replace:
+        for old in dest_dir.glob("model_*.ckpt*"):
+            old.unlink()
+    for ckpt in src_dir.glob("model_*.ckpt*"):
+        shutil.copy2(ckpt, dest_dir / ckpt.name)
+    for extra in ("checkpoint", "graph.pbtxt"):
+        src = src_dir / extra
+        if src.exists():
+            shutil.copy2(src, dest_dir / extra)
+
+
 def run_finetune(
     work_dir: Path,
     init_model_dir: Path | None = None,
@@ -700,6 +779,7 @@ def run_finetune(
     sampling_rate: int | None = FINETUNE_FS,
     loss_type: str = "cross_entropy",
     snr_threshold: float = 2.0,
+    resume: bool = False,
     cpu: bool = False,
 ) -> Path:
     """Run DeepDenoiser train.py on exported NOTO traces."""
@@ -746,15 +826,12 @@ def run_finetune(
                 f"--valid_noise_list={_abs(work_dir / 'valid' / 'noise.csv')}",
             ]
         )
-    if init_model_dir is not None:
-        import shutil
-        init_model_dir = _abs(init_model_dir)
-        for ckpt in init_model_dir.glob("model_*.ckpt*"):
-            shutil.copy2(ckpt, out_dir / ckpt.name)
-        for extra in ("checkpoint", "graph.pbtxt"):
-            src = init_model_dir / extra
-            if src.exists():
-                shutil.copy2(src, out_dir / extra)
+    if resume:
+        if init_model_dir is not None:
+            _copy_checkpoint_tree(init_model_dir, out_dir, replace=True)
+        prepare_resume_checkpoint(out_dir)
+    elif init_model_dir is not None:
+        _copy_checkpoint_tree(init_model_dir, out_dir, replace=True)
 
     subprocess.run(cmd, cwd=str(REPO_ROOT), check=True)
     promote_latest_trained_checkpoint(out_dir, [out_dir, DEEPDENOISER_CWD / "log"])

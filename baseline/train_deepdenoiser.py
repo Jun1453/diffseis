@@ -8,7 +8,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from baseline.deepdenoiser_bridge import DEFAULT_MODEL_DIR, run_finetune
+from baseline.deepdenoiser_bridge import DEFAULT_FINETUNED_MODEL, DEFAULT_MODEL_DIR, run_finetune
 
 DEFAULT_DATA = Path("results/baseline/deepdenoiser/finetune_data")
 
@@ -31,7 +31,19 @@ def _gpu_status_hint() -> str:
 def parse_args():
     p = argparse.ArgumentParser(description="Fine-tune DeepDenoiser on exported NOTO data")
     p.add_argument("--data", type=Path, default=DEFAULT_DATA, help="Root from prepare_deepdenoiser_finetune.py")
-    p.add_argument("--init_model", type=Path, default=DEFAULT_MODEL_DIR, help="Pretrained checkpoint dir")
+    p.add_argument(
+        "--init_model",
+        type=Path,
+        default=None,
+        help="Checkpoint dir to seed training (default: pretrained). "
+        "With --resume, optional source to copy into {data}/finetuned_model/ before continuing.",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue training from checkpoint in {data}/finetuned_model/ "
+        f"(default location: {DEFAULT_FINETUNED_MODEL.relative_to(_ROOT)})",
+    )
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument(
         "--batch_size",
@@ -62,15 +74,21 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.resume:
+        init_model_dir = args.init_model
+    else:
+        init_model_dir = args.init_model or DEFAULT_MODEL_DIR
+
     try:
         out_dir = run_finetune(
             args.data,
-            init_model_dir=args.init_model,
+            init_model_dir=init_model_dir,
             epochs=args.epochs,
             batch_size=args.batch_size,
             sampling_rate=args.sampling_rate,
             loss_type=args.loss_type,
             snr_threshold=args.snr_threshold,
+            resume=args.resume,
             cpu=args.cpu,
         )
     except subprocess.CalledProcessError as exc:

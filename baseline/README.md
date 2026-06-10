@@ -55,10 +55,14 @@ python baseline/repair_finetune_npz.py
 python baseline/inspect_finetune_data.py --random 6 --out results/baseline/deepdenoiser/finetune_inspect
 python baseline/inspect_finetune_data.py --station 20 --shot 4 --trace 219 --verify_source --out results/baseline/deepdenoiser/finetune_inspect
 
-# Fine-tune from pretrained weights (default: l1l2 loss, batch_size=8)
+# Fine-tune from pretrained weights (default: cross_entropy, snr_threshold=2, batch_size=8)
 python baseline/train_deepdenoiser.py --epochs 20
-# Original DeepDenoiser cross-entropy loss:
-python baseline/train_deepdenoiser.py --epochs 20 --loss_type cross_entropy
+# Continue from existing finetuned checkpoint (does not overwrite with pretrained)
+python baseline/train_deepdenoiser.py --resume --epochs 20
+# Training log prints "post-restore loss" on the first batch: ~0.3–0.4 if resume
+# worked, ~2.9 if pretrained was loaded by mistake (always use --resume).
+# Resume from a checkpoint stored elsewhere
+python baseline/train_deepdenoiser.py --resume --init_model path/to/finetuned_model --epochs 10
 
 # GPU OOM: free other jobs, or use smaller batch / CPU
 python baseline/train_deepdenoiser.py --epochs 20 --batch_size 4
