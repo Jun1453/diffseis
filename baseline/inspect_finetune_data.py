@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from baseline.data_noto import load_station_pair
+from data_noto import load_station_pair
 from baseline.deepdenoiser_bridge import FINETUNE_FS, FINETUNE_NT
 
 DEFAULT_DATA = Path("results/baseline/deepdenoiser/finetune_data")

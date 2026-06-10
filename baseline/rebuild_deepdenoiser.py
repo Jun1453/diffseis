@@ -16,7 +16,7 @@ import argparse
 
 import numpy as np
 
-from baseline.data_noto import FRAGMENT_KWARGS, load_obs_profiles
+from data_noto import FRAGMENT_KWARGS, load_obs_profiles
 from baseline.deepdenoiser_bridge import (
     DEFAULT_MODEL_DIR,
     denoise_profiles_tracewise,

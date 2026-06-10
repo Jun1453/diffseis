@@ -15,7 +15,7 @@ from typing import Optional
 
 import numpy as np
 
-from baseline.data_noto import FRAGMENT_KWARGS, _stack_targets, iter_train_station_keys
+from data_noto import FRAGMENT_KWARGS, _stack_targets, iter_train_station_keys
 from profiledd import Profiles, jamstec_handler, highpass
 from refine_train import fit_curves
 
@@ -134,7 +134,7 @@ def load_mcs_profiles(
     """
     Load MCS input passes and matching diversity-stacked OBS targets.
 
-    Uses the same train / test split as ``baseline.data_noto.load_obs_profiles``
+    Uses the same train / test split as ``data_noto.load_obs_profiles``
     (``stn_num_to_n``: non-negative = train, negative = test).
 
     Returns

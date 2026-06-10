@@ -3,7 +3,7 @@ import argparse
 
 import numpy as np
 
-from baseline.data_noto import FRAGMENT_KWARGS, load_obs_profiles
+from data_noto import FRAGMENT_KWARGS, load_obs_profiles
 from direct_denoiser import DirectDenoiser
 
 

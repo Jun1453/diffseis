@@ -5,8 +5,8 @@ from pathlib import Path
 from diffusion import GaussianDiffusion
 from unet import UNet
 
-from baseline.data_noto import FRAGMENT_KWARGS, load_obs_profiles
-from baseline.data_noto_mcs import load_mcs_profiles
+from data_noto import FRAGMENT_KWARGS, load_obs_profiles
+from data_noto_mcs import load_mcs_profiles
 
 DEFAULT_RESULT_ROOT = Path("results/demultiple0212-l1l2")
 DATATYPES = ("obs", "mcs", "otj", "nwp")

@@ -8,7 +8,7 @@ if str(_ROOT) not in sys.path:
 
 import argparse
 
-from baseline.data_noto import FRAGMENT_KWARGS, load_obs_profiles
+from data_noto import FRAGMENT_KWARGS, load_obs_profiles
 from direct_denoiser import DirectDenoiser
 
 DEFAULT_CKPT = Path("results/baseline/unet-direct/model-final.pt")
