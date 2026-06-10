@@ -25,6 +25,12 @@ def parse_args():
         action="store_true",
         help="Use leave-one-pass-out diversity stacks as training targets",
     )
+    p.add_argument(
+        "--trace_mute_ratio",
+        type=float,
+        default=0,
+        help="Fraction of traces randomly muted per patch during inference (0 disables)",
+    )
     return p.parse_args()
 
 
@@ -44,7 +50,9 @@ def main():
     model = DirectDenoiser(image_size=ds_data.unit_size, dropout=0.5, loss_type='l1l2')
     model = model.to('cuda')
 
-    ds_output = ds_data.denoise_direct(model, str(args.checkpoint), args.batch_size, 'cuda')
+    ds_output = ds_data.denoise_direct(
+        model, str(args.checkpoint), args.batch_size, 'cuda', trace_mute_ratio=args.trace_mute_ratio
+    )
 
     tag = "test" if args.test_only else "train"
     out_dir = RESULT_DIR / tag

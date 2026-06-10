@@ -1,0 +1,168 @@
+"""NOTO MCS loading for model inference on dense MCS record sections.
+
+MCS SEGY files contain fewer shooting passes than OBS but ~4x denser trace spacing
+on the first pass. For denoising inference we:
+
+1. Keep only the first MCS shooting pass (``jamstec_handler`` shot index 0).
+2. Load the matching OBS station and take the first-pass source-receiver offsets
+   as the reference geometry.
+3. For each OBS offset, keep the MCS trace whose source offset is closest.
+4. Return MCS waveforms with MCS trace offsets as ``profiles_data``, and the
+   corresponding OBS reference pass as ``profiles_target``.
+"""
+from functools import partial
+
+import numpy as np
+
+from baseline.data_noto import FRAGMENT_KWARGS, iter_train_station_keys
+from profiledd import Profiles, jamstec_handler, highpass
+from refine_train import fit_curves
+
+
+def _hipass_filter(trace, sample_rate):
+    return highpass(trace, 2.0, sample_rate, poles=4)
+
+
+def mcs_trace_indices_for_obs_offsets(mcs_offsets, obs_offsets):
+    """
+    Map each OBS offset to the index of the closest MCS trace.
+
+    Parameters
+    ----------
+    mcs_offsets, obs_offsets : array-like
+        Source-receiver offsets in km (1-D, same units as ``Profiles.offsets``).
+
+    Returns
+    -------
+    np.ndarray
+        Integer indices into ``mcs_offsets`` / MCS trace axis, length ``len(obs_offsets)``.
+    """
+    mcs_offsets = np.asarray(mcs_offsets, dtype=float)
+    obs_offsets = np.asarray(obs_offsets, dtype=float)
+    return np.abs(mcs_offsets[:, None] - obs_offsets[None, :]).argmin(axis=0)
+
+
+def _subset_mcs_pass(mcs_pass, trace_indices):
+    """Build a single-pass Profiles slice with MCS trace offsets."""
+    data = np.asarray(mcs_pass)[0:1, :, trace_indices]
+    mcs_offsets = np.asarray(mcs_pass.offsets[0], dtype=float)[trace_indices]
+    return Profiles(
+        data,
+        sampling_rate=mcs_pass.sampling_rate,
+        filter_history=mcs_pass.filter_history,
+        reduction_vel=mcs_pass.reduction_vel,
+        offsets=[mcs_offsets],
+    )
+
+
+def _preprocess_pass(pf, time_samples: int, key: str | None = None):
+    """Normalize, filter, and crop one Profiles pass."""
+    median_scale = np.median(np.ravel(np.abs(pf[0, :50, :])))
+    if median_scale > 0:
+        pf = pf / median_scale
+
+    pf = pf.filter(partial(_hipass_filter, sample_rate=pf.sampling_rate))
+    pf = pf.reduction(6.0)[:, :time_samples, :]
+
+    if key is not None:
+        try:
+            arrival = fit_curves[f"{key}"] + pf.sampling_rate * 0.5 - 75
+            padded_arrival = np.pad(arrival, (0, pf.shape[2] - len(arrival)), mode="edge")
+            pf.first_arrival_reference = [padded_arrival]
+        except KeyError:
+            pass
+
+    return pf
+
+
+def load_mcs_station_pair(
+    key: str,
+    time_samples: int = 6000,
+    obs_pass_idx: int = 0,
+    mcs_pass_idx: int = 0,
+):
+    """
+    Load one MCS station and its OBS reference pass.
+
+    Returns
+    -------
+    profiles_data : Profiles
+        First MCS pass subsampled to the OBS offset grid (MCS trace offsets).
+    profiles_target : Profiles
+        Matching OBS reference pass (OBS trace offsets).
+    """
+    obs = Profiles.load(f"noto/OBS/NT24OBS_J{key}C-1.sgy", jamstec_handler)
+    obs_pass = _preprocess_pass(obs[obs_pass_idx : obs_pass_idx + 1], time_samples, key=key)
+
+    mcs = Profiles.load(f"noto/MCS/NT24MCS_J{key}C-1.sgy", jamstec_handler)
+    mcs_pass = mcs[mcs_pass_idx : mcs_pass_idx + 1]
+
+    trace_indices = mcs_trace_indices_for_obs_offsets(mcs_pass.offsets[0], obs_pass.offsets[0])
+    mcs_aligned = _subset_mcs_pass(mcs_pass, trace_indices)
+    mcs_aligned = _preprocess_pass(mcs_aligned, time_samples, key=key)
+
+    return mcs_aligned, obs_pass
+
+
+def load_mcs_profiles(
+    train_only=True,
+    test_only=False,
+    max_stations=None,
+    time_samples: int = 6000,
+    obs_pass_idx: int = 0,
+    mcs_pass_idx: int = 0,
+):
+    """
+    Load MCS input passes and matching OBS reference passes.
+
+    Uses the same train / test split as ``baseline.data_noto.load_obs_profiles``
+    (``stn_num_to_n``: non-negative = train, negative = test).
+
+    Returns
+    -------
+    (profiles_data, profiles_target) or (None, None) if no stations match.
+
+    profiles_data
+        Concatenated MCS first passes (one per station), subsampled using OBS
+        offsets and retaining MCS trace offsets.
+    profiles_target
+        Concatenated OBS reference passes (one per station).
+    """
+    profiles_data = None
+    profiles_target = None
+    count = 0
+
+    for key in iter_train_station_keys(train_only=train_only, test_only=test_only):
+        mcs_pass, obs_pass = load_mcs_station_pair(
+            key,
+            time_samples=time_samples,
+            obs_pass_idx=obs_pass_idx,
+            mcs_pass_idx=mcs_pass_idx,
+        )
+
+        if profiles_data is None:
+            profiles_data = mcs_pass
+            profiles_target = obs_pass
+        else:
+            profiles_data = Profiles.concatenate((profiles_data, mcs_pass))
+            profiles_target = Profiles.concatenate((profiles_target, obs_pass))
+
+        count += 1
+        if max_stations is not None and count >= max_stations:
+            break
+
+    return profiles_data, profiles_target
+
+
+if __name__ == "__main__":
+    key = "01"
+    mcs, obs = load_mcs_station_pair(key)
+    mcs_offsets = np.asarray(mcs.offsets[0], dtype=float)
+    obs_offsets = np.asarray(obs.offsets[0], dtype=float)
+    print(f"station {key}: obs traces={len(obs_offsets)}, mcs aligned traces={mcs.shape[2]}")
+    print(f"MCS vs OBS offset max |diff| km: {np.max(np.abs(mcs_offsets - obs_offsets)):.4f}")
+    print(f"MCS vs OBS offset mean |diff| km: {np.mean(np.abs(mcs_offsets - obs_offsets)):.6f}")
+    print(f"profiles_data shape: {mcs.shape}, profiles_target shape: {obs.shape}")
+
+    data, target = load_mcs_profiles(max_stations=3)
+    print(f"batch profiles_data shape: {data.shape}, profiles_target shape: {target.shape}")

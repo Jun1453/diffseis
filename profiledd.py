@@ -686,9 +686,10 @@ class Profiles(np.ndarray):
             
             return rebuilt_profiles/weight
 
-        def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda'):
+        def denoise(self, ddpm, parameter_dir, batch_size=32, device='cuda', trace_mute_ratio=0):
             _require_torch("Fragment.denoise (DDPM)")
             if hasattr(self, 'ground_truth'): raise Exception('Fragment with appointed target data cannot be denoised')
+            self.trace_mute_ratio = trace_mute_ratio
             parameters = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)['model']
 
             del parameters['betas']
@@ -738,11 +739,12 @@ class Profiles(np.ndarray):
 
             return results
 
-        def denoise_direct(self, model, parameter_dir, batch_size=32, device='cuda'):
+        def denoise_direct(self, model, parameter_dir, batch_size=32, device='cuda', trace_mute_ratio=0):
             """Single-forward deterministic U-Net (no DDPM sampling)."""
             _require_torch("Fragment.denoise_direct")
             if hasattr(self, 'ground_truth'):
                 raise Exception('Fragment with appointed target data cannot be denoised')
+            self.trace_mute_ratio = trace_mute_ratio
             checkpoint = torch.load(parameter_dir, map_location=torch.device(device), weights_only=True)
             model.load_state_dict(checkpoint['model'])
             model = model.to(device)
