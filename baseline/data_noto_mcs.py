@@ -11,6 +11,7 @@ on the first pass. For denoising inference we:
    corresponding OBS reference pass as ``profiles_target``.
 """
 from functools import partial
+from typing import Optional
 
 import numpy as np
 
@@ -55,7 +56,7 @@ def _subset_mcs_pass(mcs_pass, trace_indices):
     )
 
 
-def _preprocess_pass(pf, time_samples: int, key: str | None = None):
+def _preprocess_pass(pf, time_samples: int, key: Optional[str] = None):
     """Normalize, filter, and crop one Profiles pass."""
     median_scale = np.median(np.ravel(np.abs(pf[0, :50, :])))
     if median_scale > 0:
