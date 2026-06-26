@@ -18,27 +18,19 @@ def load_station_pair(key: str, time_samples: int = 6000):
       shot 0,4 -> pf_stack2; shots 1,2,3 -> pf_stack3.
     """
     pf = Profiles.load(f"noto/OBS/NT24OBS_J{key}C-1.sgy", jamstec_handler)
-    pf = Profiles.concatenate(
-        [pf[n:n + 1] / np.median((np.ravel(np.abs(pf[n, :50, :])))) for n in range(5)]
-    )
+    if not use_gt_noise_level:
+        pf = _normalize_passes(pf)
     pf = pf.filter(partial(_hipass_filter, sample_rate=pf.sampling_rate)).reduction(6.0)[:, :time_samples, :]
 
     arrival = fit_curves[f"{key}"] + pf.sampling_rate * 0.5 - 75
     padded_arrival = np.pad(arrival, (0, pf.shape[2] - len(arrival)), mode="edge")
 
-    pf_stack3 = pf[1:4].diversity_stack(
-        orig_profile_num=True, first_arrival_reference=padded_arrival
-    )
-    pf_stack2 = pf[0:5:4].diversity_stack(
-        orig_profile_num=True, first_arrival_reference=np.flip(padded_arrival)
-    )
+    pf_stack_all = _stack_targets(pf, padded_arrival, lopo_enable=False)
+    if use_gt_noise_level:
+        pf, pf_stack_all = _align_passes_to_target_noise(pf, pf_stack_all)
 
     def clean_for_shot(shot_idx: int) -> np.ndarray:
-        if shot_idx == 0:
-            return np.asarray(pf_stack2[0], dtype=np.float32)
-        if shot_idx == 4:
-            return np.asarray(pf_stack2[1], dtype=np.float32)
-        return np.asarray(pf_stack3[shot_idx - 1], dtype=np.float32)
+        return np.asarray(pf_stack_all[shot_idx], dtype=np.float32)
 
     return pf, clean_for_shot, padded_arrival
 
@@ -67,6 +59,23 @@ def _stack_targets(pf, padded_arrival, lopo_enable=False):
     pf_stack3 = pf[1:4].diversity_stack(
         orig_profile_num=True, first_arrival_reference=padded_arrival
     )
+        # pf_stack3 = Profiles.concatenate([
+        #     pf[1:3].diversity_stack(
+        #         orig_profile_num=False, first_arrival_reference=padded_arrival
+        #     ),
+        #     pf[1:4:2].diversity_stack(
+        #         orig_profile_num=False, first_arrival_reference=padded_arrival
+        #     ),
+        #     pf[2:4].diversity_stack(
+        #         orig_profile_num=False, first_arrival_reference=padded_arrival
+        #     )
+    #     ])
+    #     return pf_stack3
+    # else: 
+    #     pf_stack3 = pf[1:4].diversity_stack(
+    #         orig_profile_num=True, first_arrival_reference=padded_arrival
+    #     )
+    #     return pf_stack3
     pf_stack2 = pf[0:5:4].diversity_stack(
         orig_profile_num=True,
         first_arrival_reference=np.flip(padded_arrival) if padded_arrival is not None else None,
@@ -94,12 +103,16 @@ def load_obs_profiles(
     test_only=False,
     max_stations=None,
     lopo_enable=False,
+    use_gt_noise_level=False,
 ):
     """
     Load input passes and diversity-stack targets.
 
     When lopo_enable is True, each input pass is paired with a diversity stack
     of the remaining passes (leave-one-pass-out).
+
+    When use_gt_noise_level is True, both input and target passes are normalized
+    by the median noise level of the corresponding target pass (first 50 samples).
 
     Returns (profiles_data, profiles_target) or (None, None) if no stations match.
     """
@@ -116,9 +129,8 @@ def load_obs_profiles(
                 continue
 
         pf = Profiles.load(f'noto/OBS/NT24OBS_J{key}C-1.sgy', jamstec_handler)
-        pf = Profiles.concatenate(
-            [pf[n:n + 1] / np.median((np.ravel(np.abs(pf[n, :50, :])))) for n in range(5)]
-        )
+        if not use_gt_noise_level:
+            pf = _normalize_passes(pf)
         pf = pf.filter(partial(_hipass_filter, sample_rate=pf.sampling_rate)).reduction(6.0)[:, :6000, :]
 
         try:
@@ -128,7 +140,13 @@ def load_obs_profiles(
             padded_arrival = None
 
         pf_stack_all = _stack_targets(pf, padded_arrival, lopo_enable=lopo_enable)
-        norm_pf = pf[:]
+        if use_gt_noise_level:
+            norm_pf, pf_stack_all = _align_passes_to_target_noise(pf, pf_stack_all)
+        else:
+            if True:
+                norm_pf = pf[1:4]
+            else:
+                norm_pf = pf[:]
 
         if profiles_data is None:
             profiles_data = norm_pf

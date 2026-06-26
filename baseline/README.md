@@ -72,12 +72,15 @@ python baseline/train_deepdenoiser.py --epochs 20 --cpu
 # NPZ shape (6000, 1, 3): model-fs waveform in prefix (effective_nt); predict --sampling_rate=100
 python baseline/rebuild_deepdenoiser.py --model finetuned --train_only
 python baseline/rebuild_deepdenoiser.py --model finetuned --test_only
+python baseline/rebuild_deepdenoiser.py --model finetuned --mcs --test_only
+python baseline/rebuild_deepdenoiser.py --model finetuned --datatype nwp --test_only
+python baseline/rebuild_deepdenoiser.py --model finetuned --datatype nwp --source obs --test_only
 
 # Re-train then infer (only if you need a new checkpoint)
 python baseline/rebuild_deepdenoiser.py --model finetuned --refinetune --finetune_epochs 10 --train_only
 ```
 
-Outputs: `results/baseline/deepdenoiser/{pretrained,finetuned}-{train,test}/` (`sections.*`, `rebuild.*`).
+Outputs: `results/baseline/deepdenoiser/{pretrained,finetuned}-{train,test}/` for Noto OBS, `{pretrained,finetuned}-mcs-{train,test}/` for Noto MCS, `{pretrained,finetuned}-nwp-{train,test}/` for NWP MCS, and `{pretrained,finetuned}-nwp-obs-{train,test}/` for NWP OBS (`sections.*`, `rebuild.*`).
 
 ## Baseline B — Deterministic U-Net (DDPM ablation)
 

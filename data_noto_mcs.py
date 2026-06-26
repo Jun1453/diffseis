@@ -15,7 +15,7 @@ from typing import Optional
 
 import numpy as np
 
-from data_noto import FRAGMENT_KWARGS, _stack_targets, iter_train_station_keys
+from data_noto import FRAGMENT_KWARGS, _normalize_passes, _stack_targets, iter_train_station_keys, median_noise_level
 from profiledd import Profiles, jamstec_handler, highpass
 from refine_train import fit_curves
 
@@ -64,23 +64,28 @@ def _padded_arrival_for_key(key: str, pf: Profiles, time_samples: int):
         return None
 
 
-def _preprocess_obs_station(key: str, time_samples: int = 6000):
+def _preprocess_obs_station(key: str, time_samples: int = 6000, use_gt_noise_level: bool = False):
     """Load and preprocess all OBS passes (matches ``load_obs_profiles``)."""
     obs = Profiles.load(f"noto/OBS/NT24OBS_J{key}C-1.sgy", jamstec_handler)
-    obs = Profiles.concatenate(
-        [obs[n:n + 1] / np.median((np.ravel(np.abs(obs[n, :50, :])))) for n in range(5)]
-    )
+    if not use_gt_noise_level:
+        obs = _normalize_passes(obs)
     obs = obs.filter(partial(_hipass_filter, sample_rate=obs.sampling_rate))
     obs = obs.reduction(6.0)[:, :time_samples, :]
     padded_arrival = _padded_arrival_for_key(key, obs, time_samples)
     return obs, padded_arrival
 
 
-def _preprocess_mcs_pass(pf, time_samples: int, key: Optional[str] = None):
+def _preprocess_mcs_pass(
+    pf,
+    time_samples: int,
+    key: Optional[str] = None,
+    noise_level: Optional[float] = None,
+):
     """Normalize, filter, and crop one MCS pass."""
-    median_scale = np.median(np.ravel(np.abs(pf[0, :50, :])))
-    if median_scale > 0:
-        pf = pf / median_scale
+    if noise_level is None:
+        noise_level = median_noise_level(pf)
+    if noise_level > 0:
+        pf = pf / noise_level
 
     pf = pf.filter(partial(_hipass_filter, sample_rate=pf.sampling_rate))
     pf = pf.reduction(6.0)[:, :time_samples, :]
@@ -98,6 +103,7 @@ def load_mcs_station_pair(
     time_samples: int = 6000,
     obs_pass_idx: int = 0,
     mcs_pass_idx: int = 0,
+    use_gt_noise_level: bool = False,
 ):
     """
     Load one MCS station and its diversity-stacked OBS target.
@@ -109,7 +115,9 @@ def load_mcs_station_pair(
     profiles_target : Profiles
         Diversity-stacked OBS target for the matching reference pass.
     """
-    obs, padded_arrival = _preprocess_obs_station(key, time_samples=time_samples)
+    obs, padded_arrival = _preprocess_obs_station(
+        key, time_samples=time_samples, use_gt_noise_level=use_gt_noise_level
+    )
     obs_pass = obs[obs_pass_idx : obs_pass_idx + 1]
     obs_target = _stack_targets(obs, padded_arrival)[obs_pass_idx : obs_pass_idx + 1]
 
@@ -118,7 +126,16 @@ def load_mcs_station_pair(
 
     trace_indices = mcs_trace_indices_for_obs_offsets(mcs_pass.offsets[0], obs_pass.offsets[0])
     mcs_aligned = _subset_mcs_pass(mcs_pass, trace_indices)
-    mcs_aligned = _preprocess_mcs_pass(mcs_aligned, time_samples, key=key)
+
+    if use_gt_noise_level:
+        ref_noise = median_noise_level(obs_target)
+        mcs_aligned = _preprocess_mcs_pass(
+            mcs_aligned, time_samples, key=key, noise_level=ref_noise
+        )
+        if ref_noise > 0:
+            obs_target = obs_target / ref_noise
+    else:
+        mcs_aligned = _preprocess_mcs_pass(mcs_aligned, time_samples, key=key)
 
     return mcs_aligned, obs_target
 
@@ -130,12 +147,16 @@ def load_mcs_profiles(
     time_samples: int = 6000,
     obs_pass_idx: int = 0,
     mcs_pass_idx: int = 0,
+    use_gt_noise_level: bool = False,
 ):
     """
     Load MCS input passes and matching diversity-stacked OBS targets.
 
     Uses the same train / test split as ``data_noto.load_obs_profiles``
     (``stn_num_to_n``: non-negative = train, negative = test).
+
+    When use_gt_noise_level is True, both MCS input and OBS target are normalized
+    by the target pass median noise level (first 50 samples).
 
     Returns
     -------
@@ -157,6 +178,7 @@ def load_mcs_profiles(
             time_samples=time_samples,
             obs_pass_idx=obs_pass_idx,
             mcs_pass_idx=mcs_pass_idx,
+            use_gt_noise_level=use_gt_noise_level,
         )
 
         if profiles_data is None:

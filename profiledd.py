@@ -75,6 +75,43 @@ def jamstec_handler(f):
     return padded_raws, padded_offsets
 
 
+def ontongjava_handler(f):
+    """Split Ontong Java OBS SEGY by TRACE_SEQUENCE_LINE shot number (header[1] // 10000)."""
+    headers = f.header
+    nshoot = 0
+    ntrace_shoot_ends = []
+    for idx, header in enumerate(headers):
+        if header[1] // 10000 > nshoot:
+            ntrace_shoot_ends.append(idx)
+            nshoot = header[1] // 10000
+    ntrace_shoot_ends.append(None)
+
+    raws = [
+        np.array(f.trace.raw[ntrace_shoot_ends[i] : ntrace_shoot_ends[i + 1]]).T
+        for i in range(len(ntrace_shoot_ends) - 1)
+    ]
+    offsets = [
+        np.array([header[37] for header in f.header[ntrace_shoot_ends[i] : ntrace_shoot_ends[i + 1]]]) / 1000
+        for i in range(len(ntrace_shoot_ends) - 1)
+    ]
+
+    max_len = max(raw.shape[1] for raw in raws)
+    padded_raws = []
+    padded_offsets = []
+    for raw, offset in zip(raws, offsets):
+        pad_width = ((0, 0), (0, max_len - raw.shape[1]))
+        padded_raws.append(np.pad(raw, pad_width, mode="edge"))
+        padded_offsets.append(np.pad(offset, (0, max_len - offset.shape[0]), mode="edge"))
+    return padded_raws, padded_offsets
+
+
+def nwp_handler(f):
+    """Load NW Pacific MCS SEGY as a single shooting pass (all traces)."""
+    raws = [np.array([f.trace.raw[i] for i in range(len(f.trace.raw))]).T]
+    offsets = [np.array([header[37] for header in f.header]) / 1000]
+    return raws, offsets
+
+
 if HAS_TORCH:
 
     class ModelEmaV2(nn.Module):
@@ -330,6 +367,29 @@ class Profiles(np.ndarray):
                             filter_history=self.filter_history,
                             reduction_vel=self.reduction_vel,
                             offsets=[np.mean(self.offsets, axis=0)])
+
+
+    def direct_wave_masking(self, first_arrival_reference=None, topography_tolerance=0.1, offset_tolerance=15, sound_speed=1.5, ref_reduction_vel=6.0):
+        if self.ndim < 2:
+            raise ValueError("Array must have at least 2 dimensions")
+
+        # masking direct waves
+        masked = self.copy()
+        for i in range(int(self.ndim < 3 or self.shape[0])):
+            key = (i,slice(None,None),slice(None,None)) if self.ndim == 3 else (slice(None,None),slice(None,None))
+            curve = first_arrival_reference[i] if  self.ndim == 3 else first_arrival_reference
+            zero_x = np.argmin(np.abs(self[key].offsets))
+            oneway_time_ref = np.min(curve[zero_x-offset_tolerance:zero_x+offset_tolerance])/self.sampling_rate
+            oneway_distance_ref = oneway_time_ref * sound_speed
+        # noise = np.ones((self.shape[0],self.shape[2])) * float(np.median(np.sqrt((np.ravel(self[:,:50,:]**2)))))
+            for j in range(self.shape[-1]):
+                horizontal_distance = np.abs(self[key].offsets[j])
+                start = int(np.sqrt(((1-topography_tolerance) * horizontal_distance)**2 + oneway_distance_ref**2)/(sound_speed+1/ref_reduction_vel)*250)
+                masking_key = (i,slice(start,None),j) if self.ndim == 3 else (slice(start,None),j)
+                masked[masking_key] = np.zeros_like(masked[masking_key])
+
+        # stacked = np.mean(stacked, axis=0)
+        return masked
 
     def filter(self, filter_func):
         filtered = [np.array([filter_func(self[i,:,j]) for j in range(self.shape[2])]).T for i in range(self.shape[0])]

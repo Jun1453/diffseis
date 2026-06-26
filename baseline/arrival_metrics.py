@@ -8,7 +8,11 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import correlate
 
-from refine_train import first_arrival_curve, interp_nan
+from refine_train import first_arrival_curve, first_arrival_curve_raw, interp_nan
+
+
+def _raw_curve(data: np.ndarray) -> np.ndarray:
+    return np.asarray(first_arrival_curve_raw(data), dtype=float)
 
 
 def _filtered_curve(data: np.ndarray) -> np.ndarray:
@@ -67,22 +71,14 @@ def aic_alignment_metrics(
     AIC first-arrival delay of pred vs ref (ref curve interpolated over failed picks).
     """
     res = []
-    pick_pred = []
-    pick_ref = []
     for n in range(profiles_pred.shape[0]):
-        curve = _filtered_curve(profiles_pred[n])
+        curve = _raw_curve(profiles_pred[n])
         curve_ref = interp_nan(_filtered_curve(profiles_ref[n]))
         delay = curve_ref - curve
         if _shot_flip(n):
             delay = np.flip(delay)
         res.append(delay)
-        pick_pred.append(aic_picking_ratio(profiles_pred[n])["successful_pick_ratio"])
-        pick_ref.append(aic_picking_ratio(profiles_ref[n])["successful_pick_ratio"])
-
-    out = _delay_stats(np.concatenate(res), fs)
-    out["Successful AIC pick ratio (pred)"] = float(np.mean(pick_pred))
-    out["Successful AIC pick ratio (ref)"] = float(np.mean(pick_ref))
-    return out
+    return _delay_stats(np.asarray(res), fs)
 
 
 def cross_correlation_delays(
@@ -113,11 +109,20 @@ def cross_correlation_metrics(
     fs: float = 250.0,
 ) -> dict[str, float]:
     delay_times, max_corr_values = cross_correlation_delays(profiles_pred, profiles_ref)
-    out = _delay_stats(delay_times, fs)
-    out["Average max correlation"] = float(np.mean(max_corr_values))
-    out["Min max correlation"] = float(np.min(max_corr_values))
-    out["Max max correlation"] = float(np.max(max_corr_values))
-    return out
+    rms = float(np.sqrt(np.mean(np.asarray(delay_times) ** 2)))
+    std = float(np.std(delay_times))
+    return {
+        "RMS delay (samples)": rms,
+        "RMS delay (seconds)": rms / fs,
+        "Standard deviation (samples)": std,
+        "Standard deviation (seconds)": std / fs,
+        "Trace ratio with |delay| > 50 samples": float(
+            np.sum(np.abs(delay_times) > 50) / np.asarray(delay_times).shape[0] / np.asarray(delay_times).shape[1]
+        ),
+        "Average max correlation": float(np.mean(max_corr_values)),
+        "Min max correlation": float(np.min(max_corr_values)),
+        "Max max correlation": float(np.max(max_corr_values)),
+    }
 
 
 def cc_alignment_metrics(
@@ -170,13 +175,11 @@ def format_metrics_table(metrics: dict[str, dict[str, float]]) -> str:
 
 def aic_plot(profiles, profiles_ref, label, ax1, shoot_pass=2, legend=False, fs=250.0):
     """Notebook-style AIC alignment figure (optional)."""
-    import matplotlib.pyplot as plt
-
     y_number = [4, 6, 9, 21, 24, 26, 27, 28]
     y_shift = np.arange(8) + 1
     res = []
     for n in range(profiles.shape[0]):
-        curve = _filtered_curve(profiles[n])
+        curve = _raw_curve(profiles[n])
         curve_ref = interp_nan(_filtered_curve(profiles_ref[n]))
         delay = curve_ref - curve
         if _shot_flip(n):
@@ -201,14 +204,7 @@ def aic_plot(profiles, profiles_ref, label, ax1, shoot_pass=2, legend=False, fs=
         ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), borderaxespad=0, ncol=3)
     ax1.set_ylabel("Aligned arrival time (s)")
     ax1.invert_yaxis()
-    out = _delay_stats(np.concatenate(res), fs)
-    out["Successful AIC pick ratio (pred)"] = float(
-        np.mean([aic_picking_ratio(profiles[n])["successful_pick_ratio"] for n in range(profiles.shape[0])])
-    )
-    out["Successful AIC pick ratio (ref)"] = float(
-        np.mean([aic_picking_ratio(profiles_ref[n])["successful_pick_ratio"] for n in range(profiles.shape[0])])
-    )
-    return out
+    return _delay_stats(np.asarray(res), fs)
 
 
 def cross_correlation_delay(profiles_tar, profiles_ref, label, ax1=None, legend=False, fs=250.0):
@@ -235,17 +231,24 @@ def cross_correlation_delay(profiles_tar, profiles_ref, label, ax1=None, legend=
 
             cbar1 = plt.colorbar(im1, cax=cax, orientation="horizontal")
             cbar1.set_label("Delay time (s)")
-    out = _delay_stats(delay_times, fs)
-    out["Average max correlation"] = float(np.mean(max_corr_values))
-    out["Min max correlation"] = float(np.min(max_corr_values))
-    out["Max max correlation"] = float(np.max(max_corr_values))
-    return out
+    rms = float(np.sqrt(np.mean(np.asarray(delay_times) ** 2)))
+    std = float(np.std(delay_times))
+    return {
+        "RMS delay (samples)": rms,
+        "RMS delay (seconds)": rms / fs,
+        "Standard deviation (samples)": std,
+        "Standard deviation (seconds)": std / fs,
+        "Trace ratio with |delay| > 50 samples": float(
+            np.sum(np.abs(delay_times) > 50) / np.asarray(delay_times).shape[0] / np.asarray(delay_times).shape[1]
+        ),
+        "Average max correlation": float(np.mean(max_corr_values)),
+        "Min max correlation": float(np.min(max_corr_values)),
+        "Max max correlation": float(np.max(max_corr_values)),
+    }
 
 
 def cc_plot(profiles, profiles_ref, label, ax1, legend=False, fs=250.0):
     """Notebook-style CC-aligned first-arrival figure (optional)."""
-    import matplotlib.pyplot as plt
-
     y_number = [4, 6, 9, 21, 24, 26, 27, 28]
     y_shift = np.arange(8) + 1
     delay_times, _ = cross_correlation_delays(profiles, profiles_ref)

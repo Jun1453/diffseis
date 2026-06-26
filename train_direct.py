@@ -14,6 +14,11 @@ def parse_args():
         action="store_true",
         help="Use leave-one-pass-out diversity stacks as training targets",
     )
+    p.add_argument(
+        "--use_gt_noise_level",
+        action="store_true",
+        help="Normalize input and ground truth using the target pass median noise level",
+    )
     return p.parse_args()
 
 
@@ -21,6 +26,7 @@ args = parse_args()
 profiles_data, profiles_target = load_obs_profiles(
     train_only=True,
     lopo_enable=args.lopo_enable,
+    use_gt_noise_level=args.use_gt_noise_level,
 )
 
 ds_gt = profiles_target.fragmentize(**FRAGMENT_KWARGS)
